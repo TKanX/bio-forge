@@ -152,3 +152,34 @@ pub enum ResiduePosition {
     FivePrime,
     ThreePrime,
 }
+
+impl BondOrder {
+    pub fn value(&self) -> f64 {
+        match self {
+            BondOrder::Single => 1.0,
+            BondOrder::Double => 2.0,
+            BondOrder::Triple => 3.0,
+            BondOrder::Aromatic => 1.5,
+        }
+    }
+}
+
+impl fmt::Display for BondOrder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.value())
+    }
+}
+
+impl FromStr for BondOrder {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "1" | "1.0" | "Single" => Ok(BondOrder::Single),
+            "2" | "2.0" | "Double" => Ok(BondOrder::Double),
+            "3" | "3.0" | "Triple" => Ok(BondOrder::Triple),
+            "1.5" | "Aromatic" => Ok(BondOrder::Aromatic),
+            _ => Err(format!("Invalid bond order: {}", s)),
+        }
+    }
+}
