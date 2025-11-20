@@ -129,6 +129,41 @@ pub enum Element {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StandardResidue {
+    ALA,
+    ARG,
+    ASN,
+    ASP,
+    CYS,
+    GLN,
+    GLU,
+    GLY,
+    HIS,
+    ILE,
+    LEU,
+    LYS,
+    MET,
+    PHE,
+    PRO,
+    SER,
+    THR,
+    TRP,
+    TYR,
+    VAL,
+    A,
+    C,
+    G,
+    U,
+    I,
+    DA,
+    DC,
+    DG,
+    DT,
+    DI,
+    HOH,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BondOrder {
     Single,
     Double,
