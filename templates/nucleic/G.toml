@@ -1,0 +1,355 @@
+[info]
+name = "G"
+standard_name = "G"
+charge = -1
+type = "RNA"
+
+[[atoms]]
+name = "P"
+element = "P"
+pos = [-0.911, -0.277, 5.008]
+
+[[atoms]]
+name = "OP1"
+element = "O"
+pos = [-1.598, 1.022, 4.844]
+
+[[atoms]]
+name = "OP2"
+element = "O"
+pos = [0.325, -0.105, 6.025]
+
+[[atoms]]
+name = "O5'"
+element = "O"
+pos = [-0.365, -0.780, 3.580]
+
+[[atoms]]
+name = "C5'"
+element = "C"
+pos = [0.542, 0.217, 3.109]
+
+[[atoms]]
+name = "C4'"
+element = "C"
+pos = [1.100, -0.200, 1.748]
+
+[[atoms]]
+name = "O4'"
+element = "O"
+pos = [0.033, -0.318, 0.782]
+
+[[atoms]]
+name = "C3'"
+element = "C"
+pos = [2.025, 0.898, 1.182]
+
+[[atoms]]
+name = "O3'"
+element = "O"
+pos = [3.395, 0.582, 1.439]
+
+[[atoms]]
+name = "C2'"
+element = "C"
+pos = [1.741, 0.884, -0.338]
+
+[[atoms]]
+name = "O2'"
+element = "O"
+pos = [2.927, 0.560, -1.066]
+
+[[atoms]]
+name = "C1'"
+element = "C"
+pos = [0.675, -0.220, -0.507]
+
+[[atoms]]
+name = "N9"
+element = "N"
+pos = [-0.297, 0.162, -1.534]
+
+[[atoms]]
+name = "C8"
+element = "C"
+pos = [-1.440, 0.880, -1.334]
+
+[[atoms]]
+name = "N7"
+element = "N"
+pos = [-2.066, 1.037, -2.464]
+
+[[atoms]]
+name = "C5"
+element = "C"
+pos = [-1.364, 0.431, -3.453]
+
+[[atoms]]
+name = "C6"
+element = "C"
+pos = [-1.556, 0.279, -4.846]
+
+[[atoms]]
+name = "O6"
+element = "O"
+pos = [-2.534, 0.755, -5.397]
+
+[[atoms]]
+name = "N1"
+element = "N"
+pos = [-0.626, -0.401, -5.551]
+
+[[atoms]]
+name = "C2"
+element = "C"
+pos = [0.459, -0.934, -4.923]
+
+[[atoms]]
+name = "N2"
+element = "N"
+pos = [1.384, -1.626, -5.664]
+
+[[atoms]]
+name = "N3"
+element = "N"
+pos = [0.649, -0.800, -3.630]
+
+[[atoms]]
+name = "C4"
+element = "C"
+pos = [-0.226, -0.134, -2.868]
+
+[[hydrogens]]
+name = "H5'"
+pos = [1.362, 0.327, 3.820]
+anchors = ["C5'", "C4'", "O5'"]
+
+[[hydrogens]]
+name = "H5''"
+pos = [0.018, 1.168, 3.011]
+anchors = ["C5'", "C4'", "O5'"]
+
+[[hydrogens]]
+name = "H4'"
+pos = [1.640, -1.144, 1.833]
+anchors = ["C4'", "C5'", "C3'"]
+
+[[hydrogens]]
+name = "H3'"
+pos = [1.772, 1.868, 1.610]
+anchors = ["C3'", "C4'", "C2'"]
+
+[[hydrogens]]
+name = "H2'"
+pos = [1.346, 1.847, -0.662]
+anchors = ["C2'", "C1'", "C3'"]
+
+[[hydrogens]]
+name = "HO2'"
+pos = [3.573, 1.254, -0.871]
+anchors = ["O2'", "C2'", "C1'"]
+
+[[hydrogens]]
+name = "H1'"
+pos = [1.148, -1.167, -0.769]
+anchors = ["C1'", "N9", "C2'"]
+
+[[hydrogens]]
+name = "H8"
+pos = [-1.776, 1.261, -0.381]
+anchors = ["C8", "N7", "N9"]
+
+[[hydrogens]]
+name = "H1"
+pos = [-0.736, -0.518, -6.508]
+anchors = ["N1", "C2", "C6"]
+
+[[hydrogens]]
+name = "H21"
+pos = [2.165, -2.007, -5.232]
+anchors = ["N2", "C2", "N3"]
+
+[[hydrogens]]
+name = "H22"
+pos = [1.256, -1.736, -6.619]
+anchors = ["N2", "C2", "N3"]
+
+[[bonds]]
+a1 = "P"
+a2 = "OP1"
+order = 2.0
+
+[[bonds]]
+a1 = "P"
+a2 = "OP2"
+order = 1.0
+
+[[bonds]]
+a1 = "P"
+a2 = "O5'"
+order = 1.0
+
+[[bonds]]
+a1 = "O5'"
+a2 = "C5'"
+order = 1.0
+
+[[bonds]]
+a1 = "C5'"
+a2 = "C4'"
+order = 1.0
+
+[[bonds]]
+a1 = "C5'"
+a2 = "H5'"
+order = 1.0
+
+[[bonds]]
+a1 = "C5'"
+a2 = "H5''"
+order = 1.0
+
+[[bonds]]
+a1 = "C4'"
+a2 = "O4'"
+order = 1.0
+
+[[bonds]]
+a1 = "C4'"
+a2 = "C3'"
+order = 1.0
+
+[[bonds]]
+a1 = "C4'"
+a2 = "H4'"
+order = 1.0
+
+[[bonds]]
+a1 = "O4'"
+a2 = "C1'"
+order = 1.0
+
+[[bonds]]
+a1 = "C3'"
+a2 = "O3'"
+order = 1.0
+
+[[bonds]]
+a1 = "C3'"
+a2 = "C2'"
+order = 1.0
+
+[[bonds]]
+a1 = "C3'"
+a2 = "H3'"
+order = 1.0
+
+[[bonds]]
+a1 = "C2'"
+a2 = "O2'"
+order = 1.0
+
+[[bonds]]
+a1 = "C2'"
+a2 = "C1'"
+order = 1.0
+
+[[bonds]]
+a1 = "C2'"
+a2 = "H2'"
+order = 1.0
+
+[[bonds]]
+a1 = "O2'"
+a2 = "HO2'"
+order = 1.0
+
+[[bonds]]
+a1 = "C1'"
+a2 = "N9"
+order = 1.0
+
+[[bonds]]
+a1 = "C1'"
+a2 = "H1'"
+order = 1.0
+
+[[bonds]]
+a1 = "N9"
+a2 = "C8"
+order = 1.5
+
+[[bonds]]
+a1 = "N9"
+a2 = "C4"
+order = 1.5
+
+[[bonds]]
+a1 = "C8"
+a2 = "N7"
+order = 1.5
+
+[[bonds]]
+a1 = "C8"
+a2 = "H8"
+order = 1.0
+
+[[bonds]]
+a1 = "N7"
+a2 = "C5"
+order = 1.5
+
+[[bonds]]
+a1 = "C5"
+a2 = "C6"
+order = 1.5
+
+[[bonds]]
+a1 = "C5"
+a2 = "C4"
+order = 1.5
+
+[[bonds]]
+a1 = "C6"
+a2 = "O6"
+order = 2.0
+
+[[bonds]]
+a1 = "C6"
+a2 = "N1"
+order = 1.0
+
+[[bonds]]
+a1 = "N1"
+a2 = "C2"
+order = 1.0
+
+[[bonds]]
+a1 = "N1"
+a2 = "H1"
+order = 1.0
+
+[[bonds]]
+a1 = "C2"
+a2 = "N2"
+order = 1.0
+
+[[bonds]]
+a1 = "C2"
+a2 = "N3"
+order = 2.0
+
+[[bonds]]
+a1 = "N2"
+a2 = "H21"
+order = 1.0
+
+[[bonds]]
+a1 = "N2"
+a2 = "H22"
+order = 1.0
+
+[[bonds]]
+a1 = "N3"
+a2 = "C4"
+order = 1.0
