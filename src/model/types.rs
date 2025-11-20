@@ -127,3 +127,11 @@ pub enum Element {
     Og = 118,
     Unknown = 0,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BondOrder {
+    Single,
+    Double,
+    Triple,
+    Aromatic,
+}
