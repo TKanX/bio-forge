@@ -1,0 +1,185 @@
+[info]
+name = "HIP"
+standard_name = "HIS"
+charge = 1
+type = "Protein"
+
+[[atoms]]
+name = "N"
+element = "N"
+pos = [-0.040, -1.210, 0.053]
+
+[[atoms]]
+name = "CA"
+element = "C"
+pos = [1.172, -1.709, 0.652]
+
+[[atoms]]
+name = "C"
+element = "C"
+pos = [1.083, -3.207, 0.905]
+
+[[atoms]]
+name = "O"
+element = "O"
+pos = [0.040, -3.770, 1.222]
+
+[[atoms]]
+name = "CB"
+element = "C"
+pos = [1.484, -0.975, 1.962]
+
+[[atoms]]
+name = "CG"
+element = "C"
+pos = [2.940, -1.060, 2.353]
+
+[[atoms]]
+name = "ND1"
+element = "N"
+pos = [3.380, -2.075, 3.129]
+
+[[atoms]]
+name = "CD2"
+element = "C"
+pos = [3.960, -0.251, 2.046]
+
+[[atoms]]
+name = "CE1"
+element = "C"
+pos = [4.693, -1.908, 3.317]
+
+[[atoms]]
+name = "NE2"
+element = "N"
+pos = [5.058, -0.801, 2.662]
+
+[[hydrogens]]
+name = "H"
+pos = [-0.102, -1.155, -0.950]
+anchors = ["N", "CA", "C"]
+
+[[hydrogens]]
+name = "HA"
+pos = [1.965, -1.558, -0.089]
+anchors = ["CA", "N", "C"]
+
+[[hydrogens]]
+name = "HB2"
+pos = [1.215, 0.087, 1.879]
+anchors = ["CB", "CA", "CG"]
+
+[[hydrogens]]
+name = "HB3"
+pos = [0.859, -1.368, 2.775]
+anchors = ["CB", "CA", "CG"]
+
+[[hydrogens]]
+name = "HD1"
+pos = [2.828, -2.838, 3.511]
+anchors = ["ND1", "CG", "CE1"]
+
+[[hydrogens]]
+name = "HD2"
+pos = [4.108, 0.647, 1.479]
+anchors = ["CD2", "CG", "NE2"]
+
+[[hydrogens]]
+name = "HE1"
+pos = [5.340, -2.550, 3.892]
+anchors = ["CE1", "ND1", "NE2"]
+
+[[hydrogens]]
+name = "HE2"
+pos = [6.002, -0.428, 2.627]
+anchors = ["NE2", "CD2", "CE1"]
+
+[[bonds]]
+a1 = "N"
+a2 = "CA"
+order = 1.0
+
+[[bonds]]
+a1 = "N"
+a2 = "H"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "C"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "CB"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "HA"
+order = 1.0
+
+[[bonds]]
+a1 = "C"
+a2 = "O"
+order = 2.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "CG"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB2"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB3"
+order = 1.0
+
+[[bonds]]
+a1 = "CG"
+a2 = "ND1"
+order = 1.5
+
+[[bonds]]
+a1 = "CG"
+a2 = "CD2"
+order = 1.5
+
+[[bonds]]
+a1 = "ND1"
+a2 = "CE1"
+order = 1.5
+
+[[bonds]]
+a1 = "ND1"
+a2 = "HD1"
+order = 1.0
+
+[[bonds]]
+a1 = "CD2"
+a2 = "NE2"
+order = 1.5
+
+[[bonds]]
+a1 = "CD2"
+a2 = "HD2"
+order = 1.0
+
+[[bonds]]
+a1 = "CE1"
+a2 = "NE2"
+order = 1.5
+
+[[bonds]]
+a1 = "CE1"
+a2 = "HE1"
+order = 1.0
+
+[[bonds]]
+a1 = "NE2"
+a2 = "HE2"
+order = 1.0

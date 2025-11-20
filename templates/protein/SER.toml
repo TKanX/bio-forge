@@ -1,0 +1,110 @@
+[info]
+name = "SER"
+standard_name = "SER"
+charge = 0
+type = "Protein"
+
+[[atoms]]
+name = "N"
+element = "N"
+pos = [1.525, 0.493, -0.608]
+
+[[atoms]]
+name = "CA"
+element = "C"
+pos = [0.100, 0.469, -0.252]
+
+[[atoms]]
+name = "C"
+element = "C"
+pos = [-0.053, 0.004, 1.173]
+
+[[atoms]]
+name = "O"
+element = "O"
+pos = [0.751, -0.760, 1.649]
+
+[[atoms]]
+name = "CB"
+element = "C"
+pos = [-0.642, -0.489, -1.184]
+
+[[atoms]]
+name = "OG"
+element = "O"
+pos = [-0.496, -0.049, -2.535]
+
+[[hydrogens]]
+name = "H"
+pos = [1.867, -0.449, -0.499]
+anchors = ["N", "CA", "C"]
+
+[[hydrogens]]
+name = "HA"
+pos = [-0.316, 1.471, -0.354]
+anchors = ["CA", "N", "C"]
+
+[[hydrogens]]
+name = "HB2"
+pos = [-0.225, -1.491, -1.081]
+anchors = ["CB", "CA", "OG"]
+
+[[hydrogens]]
+name = "HB3"
+pos = [-1.699, -0.507, -0.920]
+anchors = ["CB", "CA", "OG"]
+
+[[hydrogens]]
+name = "HG"
+pos = [-0.978, -0.679, -3.088]
+anchors = ["OG", "CB", "CA"]
+
+[[bonds]]
+a1 = "N"
+a2 = "CA"
+order = 1.0
+
+[[bonds]]
+a1 = "N"
+a2 = "H"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "C"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "CB"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "HA"
+order = 1.0
+
+[[bonds]]
+a1 = "C"
+a2 = "O"
+order = 2.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "OG"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB2"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB3"
+order = 1.0
+
+[[bonds]]
+a1 = "OG"
+a2 = "HG"
+order = 1.0

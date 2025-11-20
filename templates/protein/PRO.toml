@@ -1,0 +1,145 @@
+[info]
+name = "PRO"
+standard_name = "PRO"
+charge = 0
+type = "Protein"
+
+[[atoms]]
+name = "N"
+element = "N"
+pos = [-0.816, 1.108, 0.254]
+
+[[atoms]]
+name = "CA"
+element = "C"
+pos = [0.001, -0.107, 0.509]
+
+[[atoms]]
+name = "C"
+element = "C"
+pos = [1.408, 0.091, 0.005]
+
+[[atoms]]
+name = "O"
+element = "O"
+pos = [1.650, 0.980, -0.777]
+
+[[atoms]]
+name = "CB"
+element = "C"
+pos = [-0.703, -1.227, -0.286]
+
+[[atoms]]
+name = "CG"
+element = "C"
+pos = [-2.163, -0.753, -0.439]
+
+[[atoms]]
+name = "CD"
+element = "C"
+pos = [-2.218, 0.614, 0.276]
+
+[[hydrogens]]
+name = "HA"
+pos = [0.009, -0.343, 1.573]
+anchors = ["CA", "N", "C"]
+
+[[hydrogens]]
+name = "HB2"
+pos = [-0.240, -1.345, -1.266]
+anchors = ["CB", "CA", "CG"]
+
+[[hydrogens]]
+name = "HB3"
+pos = [-0.666, -2.165, 0.267]
+anchors = ["CB", "CA", "CG"]
+
+[[hydrogens]]
+name = "HG2"
+pos = [-2.416, -0.638, -1.493]
+anchors = ["CG", "CB", "CD"]
+
+[[hydrogens]]
+name = "HG3"
+pos = [-2.843, -1.458, 0.040]
+anchors = ["CG", "CB", "CD"]
+
+[[hydrogens]]
+name = "HD2"
+pos = [-2.872, 1.300, -0.263]
+anchors = ["CD", "CG", "N"]
+
+[[hydrogens]]
+name = "HD3"
+pos = [-2.559, 0.492, 1.304]
+anchors = ["CD", "CG", "N"]
+
+[[bonds]]
+a1 = "N"
+a2 = "CA"
+order = 1.0
+
+[[bonds]]
+a1 = "N"
+a2 = "CD"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "C"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "CB"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "HA"
+order = 1.0
+
+[[bonds]]
+a1 = "C"
+a2 = "O"
+order = 2.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "CG"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB2"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB3"
+order = 1.0
+
+[[bonds]]
+a1 = "CG"
+a2 = "CD"
+order = 1.0
+
+[[bonds]]
+a1 = "CG"
+a2 = "HG2"
+order = 1.0
+
+[[bonds]]
+a1 = "CG"
+a2 = "HG3"
+order = 1.0
+
+[[bonds]]
+a1 = "CD"
+a2 = "HD2"
+order = 1.0
+
+[[bonds]]
+a1 = "CD"
+a2 = "HD3"
+order = 1.0

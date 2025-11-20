@@ -1,0 +1,70 @@
+[info]
+name = "GLY"
+standard_name = "GLY"
+charge = 0
+type = "Protein"
+
+[[atoms]]
+name = "N"
+element = "N"
+pos = [1.931, 0.090, -0.034]
+
+[[atoms]]
+name = "CA"
+element = "C"
+pos = [0.761, -0.799, -0.008]
+
+[[atoms]]
+name = "C"
+element = "C"
+pos = [-0.498, 0.029, -0.005]
+
+[[atoms]]
+name = "O"
+element = "O"
+pos = [-0.429, 1.235, -0.023]
+
+[[hydrogens]]
+name = "H"
+pos = [1.910, 0.738, 0.738]
+anchors = ["N", "CA", "C"]
+
+[[hydrogens]]
+name = "HA2"
+pos = [0.772, -1.440, -0.889]
+anchors = ["CA", "N", "C"]
+
+[[hydrogens]]
+name = "HA3"
+pos = [0.793, -1.415, 0.891]
+anchors = ["CA", "N", "C"]
+
+[[bonds]]
+a1 = "N"
+a2 = "CA"
+order = 1.0
+
+[[bonds]]
+a1 = "N"
+a2 = "H"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "C"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "HA2"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "HA3"
+order = 1.0
+
+[[bonds]]
+a1 = "C"
+a2 = "O"
+order = 2.0

@@ -1,0 +1,160 @@
+[info]
+name = "VAL"
+standard_name = "VAL"
+charge = 0
+type = "Protein"
+
+[[atoms]]
+name = "N"
+element = "N"
+pos = [1.564, -0.642, 0.454]
+
+[[atoms]]
+name = "CA"
+element = "C"
+pos = [0.145, -0.698, 0.079]
+
+[[atoms]]
+name = "C"
+element = "C"
+pos = [-0.037, -0.093, -1.288]
+
+[[atoms]]
+name = "O"
+element = "O"
+pos = [0.703, 0.784, -1.664]
+
+[[atoms]]
+name = "CB"
+element = "C"
+pos = [-0.682, 0.086, 1.098]
+
+[[atoms]]
+name = "CG1"
+element = "C"
+pos = [-0.497, -0.528, 2.487]
+
+[[atoms]]
+name = "CG2"
+element = "C"
+pos = [-0.218, 1.543, 1.119]
+
+[[hydrogens]]
+name = "H"
+pos = [1.825, 0.332, 0.455]
+anchors = ["N", "CA", "C"]
+
+[[hydrogens]]
+name = "HA"
+pos = [-0.186, -1.736, 0.064]
+anchors = ["CA", "N", "CB"]
+
+[[hydrogens]]
+name = "HB"
+pos = [-1.736, 0.044, 0.820]
+anchors = ["CB", "CA", "CG1"]
+
+[[hydrogens]]
+name = "HG11"
+pos = [-1.087, 0.031, 3.214]
+anchors = ["CG1", "CB", "CA"]
+
+[[hydrogens]]
+name = "HG12"
+pos = [-0.828, -1.566, 2.472]
+anchors = ["CG1", "CB", "CA"]
+
+[[hydrogens]]
+name = "HG13"
+pos = [0.555, -0.486, 2.765]
+anchors = ["CG1", "CB", "CA"]
+
+[[hydrogens]]
+name = "HG21"
+pos = [0.835, 1.585, 1.397]
+anchors = ["CG2", "CB", "CA"]
+
+[[hydrogens]]
+name = "HG22"
+pos = [-0.350, 1.981, 0.130]
+anchors = ["CG2", "CB", "CA"]
+
+[[hydrogens]]
+name = "HG23"
+pos = [-0.808, 2.103, 1.845]
+anchors = ["CG2", "CB", "CA"]
+
+[[bonds]]
+a1 = "N"
+a2 = "CA"
+order = 1.0
+
+[[bonds]]
+a1 = "N"
+a2 = "H"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "C"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "CB"
+order = 1.0
+
+[[bonds]]
+a1 = "CA"
+a2 = "HA"
+order = 1.0
+
+[[bonds]]
+a1 = "C"
+a2 = "O"
+order = 2.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "CG1"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "CG2"
+order = 1.0
+
+[[bonds]]
+a1 = "CB"
+a2 = "HB"
+order = 1.0
+
+[[bonds]]
+a1 = "CG1"
+a2 = "HG11"
+order = 1.0
+
+[[bonds]]
+a1 = "CG1"
+a2 = "HG12"
+order = 1.0
+
+[[bonds]]
+a1 = "CG1"
+a2 = "HG13"
+order = 1.0
+
+[[bonds]]
+a1 = "CG2"
+a2 = "HG21"
+order = 1.0
+
+[[bonds]]
+a1 = "CG2"
+a2 = "HG22"
+order = 1.0
+
+[[bonds]]
+a1 = "CG2"
+a2 = "HG23"
+order = 1.0
