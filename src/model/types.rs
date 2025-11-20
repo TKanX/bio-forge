@@ -1075,4 +1075,161 @@ mod tests {
         assert!(ResiduePosition::from_str("").is_err());
         assert!(ResiduePosition::from_str("internal").is_err());
     }
+
+    #[test]
+    fn standard_residue_display_formats_correctly() {
+        assert_eq!(format!("{}", StandardResidue::ALA), "ALA");
+        assert_eq!(format!("{}", StandardResidue::ARG), "ARG");
+        assert_eq!(format!("{}", StandardResidue::ASN), "ASN");
+        assert_eq!(format!("{}", StandardResidue::ASP), "ASP");
+        assert_eq!(format!("{}", StandardResidue::CYS), "CYS");
+        assert_eq!(format!("{}", StandardResidue::GLN), "GLN");
+        assert_eq!(format!("{}", StandardResidue::GLU), "GLU");
+        assert_eq!(format!("{}", StandardResidue::GLY), "GLY");
+        assert_eq!(format!("{}", StandardResidue::HIS), "HIS");
+        assert_eq!(format!("{}", StandardResidue::ILE), "ILE");
+        assert_eq!(format!("{}", StandardResidue::LEU), "LEU");
+        assert_eq!(format!("{}", StandardResidue::LYS), "LYS");
+        assert_eq!(format!("{}", StandardResidue::MET), "MET");
+        assert_eq!(format!("{}", StandardResidue::PHE), "PHE");
+        assert_eq!(format!("{}", StandardResidue::PRO), "PRO");
+        assert_eq!(format!("{}", StandardResidue::SER), "SER");
+        assert_eq!(format!("{}", StandardResidue::THR), "THR");
+        assert_eq!(format!("{}", StandardResidue::TRP), "TRP");
+        assert_eq!(format!("{}", StandardResidue::TYR), "TYR");
+        assert_eq!(format!("{}", StandardResidue::VAL), "VAL");
+        assert_eq!(format!("{}", StandardResidue::A), "A");
+        assert_eq!(format!("{}", StandardResidue::C), "C");
+        assert_eq!(format!("{}", StandardResidue::G), "G");
+        assert_eq!(format!("{}", StandardResidue::U), "U");
+        assert_eq!(format!("{}", StandardResidue::I), "I");
+        assert_eq!(format!("{}", StandardResidue::DA), "DA");
+        assert_eq!(format!("{}", StandardResidue::DC), "DC");
+        assert_eq!(format!("{}", StandardResidue::DG), "DG");
+        assert_eq!(format!("{}", StandardResidue::DT), "DT");
+        assert_eq!(format!("{}", StandardResidue::DI), "DI");
+        assert_eq!(format!("{}", StandardResidue::HOH), "HOH");
+    }
+
+    #[test]
+    fn standard_residue_from_str_parses_valid_inputs() {
+        assert_eq!(
+            StandardResidue::from_str("ALA").unwrap(),
+            StandardResidue::ALA
+        );
+        assert_eq!(
+            StandardResidue::from_str("ARG").unwrap(),
+            StandardResidue::ARG
+        );
+        assert_eq!(
+            StandardResidue::from_str("ASN").unwrap(),
+            StandardResidue::ASN
+        );
+        assert_eq!(
+            StandardResidue::from_str("ASP").unwrap(),
+            StandardResidue::ASP
+        );
+        assert_eq!(
+            StandardResidue::from_str("CYS").unwrap(),
+            StandardResidue::CYS
+        );
+        assert_eq!(
+            StandardResidue::from_str("GLN").unwrap(),
+            StandardResidue::GLN
+        );
+        assert_eq!(
+            StandardResidue::from_str("GLU").unwrap(),
+            StandardResidue::GLU
+        );
+        assert_eq!(
+            StandardResidue::from_str("GLY").unwrap(),
+            StandardResidue::GLY
+        );
+        assert_eq!(
+            StandardResidue::from_str("HIS").unwrap(),
+            StandardResidue::HIS
+        );
+        assert_eq!(
+            StandardResidue::from_str("ILE").unwrap(),
+            StandardResidue::ILE
+        );
+        assert_eq!(
+            StandardResidue::from_str("LEU").unwrap(),
+            StandardResidue::LEU
+        );
+        assert_eq!(
+            StandardResidue::from_str("LYS").unwrap(),
+            StandardResidue::LYS
+        );
+        assert_eq!(
+            StandardResidue::from_str("MET").unwrap(),
+            StandardResidue::MET
+        );
+        assert_eq!(
+            StandardResidue::from_str("PHE").unwrap(),
+            StandardResidue::PHE
+        );
+        assert_eq!(
+            StandardResidue::from_str("PRO").unwrap(),
+            StandardResidue::PRO
+        );
+        assert_eq!(
+            StandardResidue::from_str("SER").unwrap(),
+            StandardResidue::SER
+        );
+        assert_eq!(
+            StandardResidue::from_str("THR").unwrap(),
+            StandardResidue::THR
+        );
+        assert_eq!(
+            StandardResidue::from_str("TRP").unwrap(),
+            StandardResidue::TRP
+        );
+        assert_eq!(
+            StandardResidue::from_str("TYR").unwrap(),
+            StandardResidue::TYR
+        );
+        assert_eq!(
+            StandardResidue::from_str("VAL").unwrap(),
+            StandardResidue::VAL
+        );
+        assert_eq!(StandardResidue::from_str("A").unwrap(), StandardResidue::A);
+        assert_eq!(StandardResidue::from_str("C").unwrap(), StandardResidue::C);
+        assert_eq!(StandardResidue::from_str("G").unwrap(), StandardResidue::G);
+        assert_eq!(StandardResidue::from_str("U").unwrap(), StandardResidue::U);
+        assert_eq!(StandardResidue::from_str("I").unwrap(), StandardResidue::I);
+        assert_eq!(
+            StandardResidue::from_str("DA").unwrap(),
+            StandardResidue::DA
+        );
+        assert_eq!(
+            StandardResidue::from_str("DC").unwrap(),
+            StandardResidue::DC
+        );
+        assert_eq!(
+            StandardResidue::from_str("DG").unwrap(),
+            StandardResidue::DG
+        );
+        assert_eq!(
+            StandardResidue::from_str("DT").unwrap(),
+            StandardResidue::DT
+        );
+        assert_eq!(
+            StandardResidue::from_str("DI").unwrap(),
+            StandardResidue::DI
+        );
+        assert_eq!(
+            StandardResidue::from_str("HOH").unwrap(),
+            StandardResidue::HOH
+        );
+    }
+
+    #[test]
+    fn standard_residue_from_str_handles_invalid_input() {
+        assert!(StandardResidue::from_str("XYZ").is_err());
+        assert!(StandardResidue::from_str("Ala").is_err());
+        assert!(StandardResidue::from_str("").is_err());
+        assert!(StandardResidue::from_str("ALA ").is_err());
+        assert!(StandardResidue::from_str("INVALID").is_err());
+    }
 }
