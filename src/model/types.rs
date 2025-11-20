@@ -761,3 +761,203 @@ impl FromStr for Element {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_symbol_returns_correct_value() {
+        assert_eq!(Element::H.symbol(), "H");
+        assert_eq!(Element::C.symbol(), "C");
+        assert_eq!(Element::O.symbol(), "O");
+        assert_eq!(Element::Fe.symbol(), "Fe");
+        assert_eq!(Element::U.symbol(), "U");
+        assert_eq!(Element::Unknown.symbol(), "Unknown");
+    }
+
+    #[test]
+    fn element_is_heavy_atom_identifies_correctly() {
+        assert!(!Element::H.is_heavy_atom());
+        assert!(Element::C.is_heavy_atom());
+        assert!(Element::O.is_heavy_atom());
+        assert!(Element::Fe.is_heavy_atom());
+        assert!(Element::Unknown.is_heavy_atom());
+    }
+
+    #[test]
+    fn element_atomic_mass_returns_correct_value() {
+        assert_eq!(Element::H.atomic_mass(), 1.00794);
+        assert_eq!(Element::C.atomic_mass(), 12.0107);
+        assert_eq!(Element::O.atomic_mass(), 15.9994);
+        assert_eq!(Element::Fe.atomic_mass(), 55.845);
+        assert_eq!(Element::Unknown.atomic_mass(), 0.0);
+    }
+
+    #[test]
+    fn element_display_formats_correctly() {
+        assert_eq!(format!("{}", Element::H), "H");
+        assert_eq!(format!("{}", Element::C), "C");
+        assert_eq!(format!("{}", Element::Unknown), "Unknown");
+    }
+
+    #[test]
+    fn element_from_str_parses_valid_symbols() {
+        assert_eq!(Element::from_str("H").unwrap(), Element::H);
+        assert_eq!(Element::from_str("C").unwrap(), Element::C);
+        assert_eq!(Element::from_str("O").unwrap(), Element::O);
+        assert_eq!(Element::from_str("Fe").unwrap(), Element::Fe);
+        assert_eq!(Element::from_str("Unknown").unwrap(), Element::Unknown);
+    }
+
+    #[test]
+    fn element_from_str_parses_valid_numbers() {
+        assert_eq!(Element::from_str("1").unwrap(), Element::H);
+        assert_eq!(Element::from_str("6").unwrap(), Element::C);
+        assert_eq!(Element::from_str("8").unwrap(), Element::O);
+        assert_eq!(Element::from_str("26").unwrap(), Element::Fe);
+        assert_eq!(Element::from_str("0").unwrap(), Element::Unknown);
+        assert_eq!(Element::from_str("119").unwrap(), Element::Unknown);
+    }
+
+    #[test]
+    fn element_from_str_handles_invalid_input() {
+        assert_eq!(Element::from_str("Invalid").unwrap(), Element::Unknown);
+        assert_eq!(Element::from_str("Zz").unwrap(), Element::Unknown);
+        assert_eq!(Element::from_str("-1").unwrap(), Element::Unknown);
+    }
+
+    #[test]
+    fn bond_order_value_returns_correct_f64() {
+        assert_eq!(BondOrder::Single.value(), 1.0);
+        assert_eq!(BondOrder::Double.value(), 2.0);
+        assert_eq!(BondOrder::Triple.value(), 3.0);
+        assert_eq!(BondOrder::Aromatic.value(), 1.5);
+    }
+
+    #[test]
+    fn bond_order_display_formats_correctly() {
+        assert_eq!(format!("{}", BondOrder::Single), "1");
+        assert_eq!(format!("{}", BondOrder::Double), "2");
+        assert_eq!(format!("{}", BondOrder::Triple), "3");
+        assert_eq!(format!("{}", BondOrder::Aromatic), "1.5");
+    }
+
+    #[test]
+    fn bond_order_from_str_parses_valid_inputs() {
+        assert_eq!(BondOrder::from_str("1").unwrap(), BondOrder::Single);
+        assert_eq!(BondOrder::from_str("1.0").unwrap(), BondOrder::Single);
+        assert_eq!(BondOrder::from_str("Single").unwrap(), BondOrder::Single);
+        assert_eq!(BondOrder::from_str("2").unwrap(), BondOrder::Double);
+        assert_eq!(BondOrder::from_str("2.0").unwrap(), BondOrder::Double);
+        assert_eq!(BondOrder::from_str("Double").unwrap(), BondOrder::Double);
+        assert_eq!(BondOrder::from_str("3").unwrap(), BondOrder::Triple);
+        assert_eq!(BondOrder::from_str("3.0").unwrap(), BondOrder::Triple);
+        assert_eq!(BondOrder::from_str("Triple").unwrap(), BondOrder::Triple);
+        assert_eq!(BondOrder::from_str("1.5").unwrap(), BondOrder::Aromatic);
+        assert_eq!(
+            BondOrder::from_str("Aromatic").unwrap(),
+            BondOrder::Aromatic
+        );
+    }
+
+    #[test]
+    fn bond_order_from_str_handles_invalid_input() {
+        assert!(BondOrder::from_str("4").is_err());
+        assert!(BondOrder::from_str("Quadruple").is_err());
+        assert!(BondOrder::from_str("1.2").is_err());
+        assert!(BondOrder::from_str("").is_err());
+    }
+
+    #[test]
+    fn residue_category_name_returns_correct_string() {
+        assert_eq!(ResidueCategory::Standard.name(), "Standard Residue");
+        assert_eq!(ResidueCategory::Hetero.name(), "Hetero Residue");
+        assert_eq!(ResidueCategory::Ion.name(), "Ion");
+    }
+
+    #[test]
+    fn residue_category_display_formats_correctly() {
+        assert_eq!(format!("{}", ResidueCategory::Standard), "Standard Residue");
+        assert_eq!(format!("{}", ResidueCategory::Hetero), "Hetero Residue");
+        assert_eq!(format!("{}", ResidueCategory::Ion), "Ion");
+    }
+
+    #[test]
+    fn residue_category_from_str_parses_valid_inputs() {
+        assert_eq!(
+            ResidueCategory::from_str("Standard").unwrap(),
+            ResidueCategory::Standard
+        );
+        assert_eq!(
+            ResidueCategory::from_str("Hetero").unwrap(),
+            ResidueCategory::Hetero
+        );
+        assert_eq!(
+            ResidueCategory::from_str("Ion").unwrap(),
+            ResidueCategory::Ion
+        );
+    }
+
+    #[test]
+    fn residue_category_from_str_handles_invalid_input() {
+        assert!(ResidueCategory::from_str("Unknown").is_err());
+        assert!(ResidueCategory::from_str("").is_err());
+        assert!(ResidueCategory::from_str("standard").is_err());
+    }
+
+    #[test]
+    fn residue_position_name_returns_correct_string() {
+        assert_eq!(ResiduePosition::None.name(), "None");
+        assert_eq!(ResiduePosition::Internal.name(), "Internal");
+        assert_eq!(ResiduePosition::NTerminal.name(), "N-Terminal");
+        assert_eq!(ResiduePosition::CTerminal.name(), "C-Terminal");
+        assert_eq!(ResiduePosition::FivePrime.name(), "5'-Terminal");
+        assert_eq!(ResiduePosition::ThreePrime.name(), "3'-Terminal");
+    }
+
+    #[test]
+    fn residue_position_display_formats_correctly() {
+        assert_eq!(format!("{}", ResiduePosition::None), "None");
+        assert_eq!(format!("{}", ResiduePosition::Internal), "Internal");
+        assert_eq!(format!("{}", ResiduePosition::NTerminal), "N-Terminal");
+        assert_eq!(format!("{}", ResiduePosition::CTerminal), "C-Terminal");
+        assert_eq!(format!("{}", ResiduePosition::FivePrime), "5'-Terminal");
+        assert_eq!(format!("{}", ResiduePosition::ThreePrime), "3'-Terminal");
+    }
+
+    #[test]
+    fn residue_position_from_str_parses_valid_inputs() {
+        assert_eq!(
+            ResiduePosition::from_str("None").unwrap(),
+            ResiduePosition::None
+        );
+        assert_eq!(
+            ResiduePosition::from_str("Internal").unwrap(),
+            ResiduePosition::Internal
+        );
+        assert_eq!(
+            ResiduePosition::from_str("NTerminal").unwrap(),
+            ResiduePosition::NTerminal
+        );
+        assert_eq!(
+            ResiduePosition::from_str("CTerminal").unwrap(),
+            ResiduePosition::CTerminal
+        );
+        assert_eq!(
+            ResiduePosition::from_str("FivePrime").unwrap(),
+            ResiduePosition::FivePrime
+        );
+        assert_eq!(
+            ResiduePosition::from_str("ThreePrime").unwrap(),
+            ResiduePosition::ThreePrime
+        );
+    }
+
+    #[test]
+    fn residue_position_from_str_handles_invalid_input() {
+        assert!(ResiduePosition::from_str("Unknown").is_err());
+        assert!(ResiduePosition::from_str("").is_err());
+        assert!(ResiduePosition::from_str("internal").is_err());
+    }
+}
