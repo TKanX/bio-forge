@@ -19,6 +19,7 @@ readme = "README.md"
 
 [dependencies]
 thiserror = "2.0.17"
+nalgebra = "0.34.1"
 
 [lib]
 name = "bio_forge"
