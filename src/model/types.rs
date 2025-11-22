@@ -188,6 +188,50 @@ pub enum ResiduePosition {
     ThreePrime,
 }
 
+impl StandardResidue {
+    pub fn is_protein(self) -> bool {
+        matches!(
+            self,
+            StandardResidue::ALA
+                | StandardResidue::ARG
+                | StandardResidue::ASN
+                | StandardResidue::ASP
+                | StandardResidue::CYS
+                | StandardResidue::GLN
+                | StandardResidue::GLU
+                | StandardResidue::GLY
+                | StandardResidue::HIS
+                | StandardResidue::ILE
+                | StandardResidue::LEU
+                | StandardResidue::LYS
+                | StandardResidue::MET
+                | StandardResidue::PHE
+                | StandardResidue::PRO
+                | StandardResidue::SER
+                | StandardResidue::THR
+                | StandardResidue::TRP
+                | StandardResidue::TYR
+                | StandardResidue::VAL
+        )
+    }
+
+    pub fn is_nucleic(self) -> bool {
+        matches!(
+            self,
+            StandardResidue::A
+                | StandardResidue::C
+                | StandardResidue::G
+                | StandardResidue::U
+                | StandardResidue::I
+                | StandardResidue::DA
+                | StandardResidue::DC
+                | StandardResidue::DG
+                | StandardResidue::DT
+                | StandardResidue::DI
+        )
+    }
+}
+
 impl BondOrder {
     pub fn value(&self) -> f64 {
         match self {
