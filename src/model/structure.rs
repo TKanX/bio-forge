@@ -43,13 +43,24 @@ impl Structure {
         self.chains.iter_mut().find(|c| c.id == id)
     }
 
-    pub fn find_residue(&self, chain_id: &str, residue_id: i32) -> Option<&Residue> {
-        self.chain(chain_id).and_then(|c| c.residue(residue_id))
+    pub fn find_residue(
+        &self,
+        chain_id: &str,
+        residue_id: i32,
+        insertion_code: Option<char>,
+    ) -> Option<&Residue> {
+        self.chain(chain_id)
+            .and_then(|c| c.residue(residue_id, insertion_code))
     }
 
-    pub fn find_residue_mut(&mut self, chain_id: &str, residue_id: i32) -> Option<&mut Residue> {
+    pub fn find_residue_mut(
+        &mut self,
+        chain_id: &str,
+        residue_id: i32,
+        insertion_code: Option<char>,
+    ) -> Option<&mut Residue> {
         self.chain_mut(chain_id)
-            .and_then(|c| c.residue_mut(residue_id))
+            .and_then(|c| c.residue_mut(residue_id, insertion_code))
     }
 
     pub fn sort_chains_by_id(&mut self) {
