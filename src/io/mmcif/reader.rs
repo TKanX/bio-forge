@@ -95,23 +95,21 @@ pub fn read<R: BufRead>(reader: R, context: &IoContext) -> Result<Structure, Err
             ParserState::InLoopHeader => {
                 if tokens[0].starts_with('_') {
                     current_loop_headers.push(tokens[0].clone());
+                } else if current_loop_headers
+                    .iter()
+                    .any(|h| h.starts_with("_atom_site."))
+                {
+                    state = ParserState::InAtomSiteLoop;
+                    atom_indices = map_atom_site_indices(&current_loop_headers);
+                    process_atom_line(
+                        &tokens,
+                        &atom_indices,
+                        line_num,
+                        &mut chain_order,
+                        &mut chain_map,
+                    )?;
                 } else {
-                    if current_loop_headers
-                        .iter()
-                        .any(|h| h.starts_with("_atom_site."))
-                    {
-                        state = ParserState::InAtomSiteLoop;
-                        atom_indices = map_atom_site_indices(&current_loop_headers);
-                        process_atom_line(
-                            &tokens,
-                            &atom_indices,
-                            line_num,
-                            &mut chain_order,
-                            &mut chain_map,
-                        )?;
-                    } else {
-                        state = ParserState::InOtherLoop;
-                    }
+                    state = ParserState::InOtherLoop;
                 }
             }
             ParserState::InAtomSiteLoop => {
@@ -213,7 +211,7 @@ fn map_atom_site_indices(headers: &[String]) -> AtomSiteIndices {
     indices
 }
 
-fn token<'a>(tokens: &'a [String], idx: usize, line_num: usize) -> Result<&'a str, Error> {
+fn token(tokens: &[String], idx: usize, line_num: usize) -> Result<&str, Error> {
     tokens.get(idx).map(|s| s.as_str()).ok_or_else(|| {
         Error::parse(
             "mmCIF",
@@ -224,11 +222,11 @@ fn token<'a>(tokens: &'a [String], idx: usize, line_num: usize) -> Result<&'a st
     })
 }
 
-fn optional_token<'a>(
-    tokens: &'a [String],
+fn optional_token(
+    tokens: &[String],
     idx: Option<usize>,
     line_num: usize,
-) -> Result<Option<&'a str>, Error> {
+) -> Result<Option<&str>, Error> {
     if let Some(idx) = idx {
         token(tokens, idx, line_num).map(Some)
     } else {
