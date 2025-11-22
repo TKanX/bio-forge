@@ -273,6 +273,12 @@ impl IoContext {
     pub fn add_alias(&mut self, alias: impl Into<String>, canonical: impl Into<String>) {
         self.alias_map.insert(alias.into(), canonical.into());
     }
+
+    pub fn classify_residue(&self, raw_name: &str) -> (String, Option<StandardResidue>) {
+        let canonical = self.resolve_name(raw_name);
+        let standard = self.map_to_standard(canonical);
+        (canonical.to_string(), standard)
+    }
 }
 
 impl Default for IoContext {
