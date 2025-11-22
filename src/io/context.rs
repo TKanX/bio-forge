@@ -280,3 +280,154 @@ impl Default for IoContext {
         Self::new_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::types::StandardResidue;
+
+    #[test]
+    fn io_context_new_default_creates_context_with_mappings() {
+        let context = IoContext::new_default();
+
+        assert!(context.alias_map.contains_key("ALA"));
+        assert!(context.standard_map.contains_key("ALA"));
+        assert!(context.alias_map.contains_key("HOH"));
+        assert!(context.standard_map.contains_key("HOH"));
+
+        assert!(context.alias_map.contains_key("AIB"));
+        assert!(context.alias_map.contains_key("WAT"));
+    }
+
+    #[test]
+    fn io_context_default_creates_same_as_new_default() {
+        let context1 = IoContext::new_default();
+        let context2 = IoContext::default();
+
+        assert_eq!(context1.alias_map.len(), context2.alias_map.len());
+        assert_eq!(context1.standard_map.len(), context2.standard_map.len());
+
+        assert_eq!(context1.alias_map.get("ALA"), context2.alias_map.get("ALA"));
+        assert_eq!(
+            context1.standard_map.get("ALA"),
+            context2.standard_map.get("ALA")
+        );
+    }
+
+    #[test]
+    fn io_context_clone_creates_identical_copy() {
+        let context = IoContext::new_default();
+        let cloned = context.clone();
+
+        assert_eq!(context.alias_map, cloned.alias_map);
+        assert_eq!(context.standard_map, cloned.standard_map);
+    }
+
+    #[test]
+    fn io_context_debug_formats_correctly() {
+        let context = IoContext::new_default();
+        let debug_str = format!("{:?}", context);
+
+        assert!(debug_str.contains("IoContext"));
+        assert!(debug_str.contains("alias_map"));
+        assert!(debug_str.contains("standard_map"));
+    }
+
+    #[test]
+    fn resolve_name_returns_canonical_for_standard_residue() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.resolve_name("ALA"), "ALA");
+        assert_eq!(context.resolve_name("GLY"), "GLY");
+        assert_eq!(context.resolve_name("HOH"), "HOH");
+    }
+
+    #[test]
+    fn resolve_name_returns_canonical_for_alias() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.resolve_name("AIB"), "ALA");
+        assert_eq!(context.resolve_name("WAT"), "HOH");
+        assert_eq!(context.resolve_name("SOL"), "HOH");
+        assert_eq!(context.resolve_name("DAL"), "ALA");
+    }
+
+    #[test]
+    fn resolve_name_returns_original_for_unknown_name() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.resolve_name("UNKNOWN"), "UNKNOWN");
+        assert_eq!(context.resolve_name("XYZ123"), "XYZ123");
+    }
+
+    #[test]
+    fn map_to_standard_returns_correct_enum_for_standard_residues() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.map_to_standard("ALA"), Some(StandardResidue::ALA));
+        assert_eq!(context.map_to_standard("GLY"), Some(StandardResidue::GLY));
+        assert_eq!(context.map_to_standard("ARG"), Some(StandardResidue::ARG));
+        assert_eq!(context.map_to_standard("HOH"), Some(StandardResidue::HOH));
+        assert_eq!(context.map_to_standard("DA"), Some(StandardResidue::DA));
+        assert_eq!(context.map_to_standard("A"), Some(StandardResidue::A));
+    }
+
+    #[test]
+    fn map_to_standard_returns_none_for_aliases() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.map_to_standard("AIB"), None);
+        assert_eq!(context.map_to_standard("WAT"), None);
+        assert_eq!(context.map_to_standard("ARN"), Some(StandardResidue::ARG));
+    }
+
+    #[test]
+    fn map_to_standard_returns_none_for_unknown_names() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.map_to_standard("UNKNOWN"), None);
+        assert_eq!(context.map_to_standard("XYZ"), None);
+    }
+
+    #[test]
+    fn add_alias_adds_new_alias_mapping() {
+        let mut context = IoContext::new_default();
+
+        context.add_alias("TEST_ALIAS", "ALA");
+
+        assert_eq!(context.resolve_name("TEST_ALIAS"), "ALA");
+        assert_eq!(context.map_to_standard("TEST_ALIAS"), None);
+    }
+
+    #[test]
+    fn add_alias_overwrites_existing_alias() {
+        let mut context = IoContext::new_default();
+
+        assert_eq!(context.resolve_name("AIB"), "ALA");
+
+        context.add_alias("AIB", "GLY");
+
+        assert_eq!(context.resolve_name("AIB"), "GLY");
+    }
+
+    #[test]
+    fn add_alias_with_string_types() {
+        let mut context = IoContext::new_default();
+
+        context.add_alias("STR_ALIAS", "GLY");
+        assert_eq!(context.resolve_name("STR_ALIAS"), "GLY");
+
+        context.add_alias(String::from("OWNED_ALIAS"), String::from("ALA"));
+        assert_eq!(context.resolve_name("OWNED_ALIAS"), "ALA");
+    }
+
+    #[test]
+    fn context_handles_case_sensitivity() {
+        let context = IoContext::new_default();
+
+        assert_eq!(context.resolve_name("ala"), "ala");
+        assert_eq!(context.resolve_name("ALA"), "ALA");
+        assert_eq!(context.map_to_standard("ala"), None);
+        assert_eq!(context.map_to_standard("ALA"), Some(StandardResidue::ALA));
+    }
+}
