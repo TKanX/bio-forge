@@ -133,12 +133,14 @@ mod tests {
     fn residue_new_creates_correct_residue() {
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
 
         assert_eq!(residue.id, 1);
+        assert_eq!(residue.insertion_code, None);
         assert_eq!(residue.name, "ALA");
         assert_eq!(residue.standard_name, Some(StandardResidue::ALA));
         assert_eq!(residue.category, ResidueCategory::Standard);
@@ -147,8 +149,22 @@ mod tests {
     }
 
     #[test]
+    fn residue_new_with_insertion_code() {
+        let residue = Residue::new(
+            1,
+            Some('A'),
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+
+        assert_eq!(residue.id, 1);
+        assert_eq!(residue.insertion_code, Some('A'));
+    }
+
+    #[test]
     fn residue_new_with_none_standard_name() {
-        let residue = Residue::new(2, "UNK", None, ResidueCategory::Hetero);
+        let residue = Residue::new(2, None, "UNK", None, ResidueCategory::Hetero);
 
         assert_eq!(residue.id, 2);
         assert_eq!(residue.name, "UNK");
@@ -160,6 +176,7 @@ mod tests {
     fn residue_is_standard_returns_true_for_standard_residue() {
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -169,7 +186,7 @@ mod tests {
 
     #[test]
     fn residue_is_standard_returns_false_for_non_standard_residue() {
-        let residue = Residue::new(2, "UNK", None, ResidueCategory::Hetero);
+        let residue = Residue::new(2, None, "UNK", None, ResidueCategory::Hetero);
         assert!(!residue.is_standard());
     }
 
@@ -177,6 +194,7 @@ mod tests {
     fn residue_add_atom_adds_atom_correctly() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -194,6 +212,7 @@ mod tests {
     fn residue_remove_atom_removes_existing_atom() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -213,6 +232,7 @@ mod tests {
     fn residue_remove_atom_returns_none_for_nonexistent_atom() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -227,6 +247,7 @@ mod tests {
     fn residue_atom_returns_correct_atom() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -244,6 +265,7 @@ mod tests {
     fn residue_atom_returns_none_for_nonexistent_atom() {
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -258,6 +280,7 @@ mod tests {
     fn residue_atom_mut_returns_correct_mutable_atom() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -275,6 +298,7 @@ mod tests {
     fn residue_atom_mut_returns_none_for_nonexistent_atom() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -289,6 +313,7 @@ mod tests {
     fn residue_has_atom_returns_true_for_existing_atom() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -303,6 +328,7 @@ mod tests {
     fn residue_has_atom_returns_false_for_nonexistent_atom() {
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -315,6 +341,7 @@ mod tests {
     fn residue_atoms_returns_correct_slice() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -335,6 +362,7 @@ mod tests {
     fn residue_atom_count_returns_correct_count() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -352,6 +380,7 @@ mod tests {
     fn residue_is_empty_returns_true_for_empty_residue() {
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -364,6 +393,7 @@ mod tests {
     fn residue_is_empty_returns_false_for_non_empty_residue() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -378,6 +408,7 @@ mod tests {
     fn residue_iter_atoms_iterates_correctly() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -399,6 +430,7 @@ mod tests {
     fn residue_iter_atoms_mut_iterates_correctly() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -417,6 +449,7 @@ mod tests {
     fn residue_strip_hydrogens_removes_hydrogen_atoms() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -440,6 +473,7 @@ mod tests {
     fn residue_strip_hydrogens_preserves_non_hydrogen_atoms() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -463,6 +497,7 @@ mod tests {
     fn residue_display_formats_standard_residue_correctly() {
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -476,8 +511,25 @@ mod tests {
     }
 
     #[test]
+    fn residue_display_formats_residue_with_insertion_code_correctly() {
+        let residue = Residue::new(
+            1,
+            Some('A'),
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+
+        let display = format!("{}", residue);
+        let expected =
+            "Residue { id: 1 (ic: A), name: \"ALA\" (ALA), category: Standard Residue, atoms: 0 }";
+
+        assert_eq!(display, expected);
+    }
+
+    #[test]
     fn residue_display_formats_non_standard_residue_correctly() {
-        let residue = Residue::new(2, "UNK", None, ResidueCategory::Hetero);
+        let residue = Residue::new(2, None, "UNK", None, ResidueCategory::Hetero);
 
         let display = format!("{}", residue);
         let expected = "Residue { id: 2, name: \"UNK\", category: Hetero Residue, atoms: 0 }";
@@ -489,6 +541,7 @@ mod tests {
     fn residue_display_includes_atom_count() {
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -509,6 +562,7 @@ mod tests {
     fn residue_clone_creates_identical_copy() {
         let mut residue = Residue::new(
             1,
+            Some('A'),
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -521,6 +575,7 @@ mod tests {
 
         assert_eq!(residue, cloned);
         assert_eq!(residue.id, cloned.id);
+        assert_eq!(residue.insertion_code, cloned.insertion_code);
         assert_eq!(residue.name, cloned.name);
         assert_eq!(residue.standard_name, cloned.standard_name);
         assert_eq!(residue.category, cloned.category);
@@ -532,12 +587,14 @@ mod tests {
     fn residue_partial_eq_compares_correctly() {
         let mut residue1 = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
         let mut residue2 = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -548,6 +605,7 @@ mod tests {
 
         let residue3 = Residue::new(
             2,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
