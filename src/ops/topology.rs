@@ -366,3 +366,236 @@ impl TopologyBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        atom::Atom,
+        chain::Chain,
+        residue::Residue,
+        structure::Structure,
+        template::Template,
+        types::{Element, Point, ResidueCategory, ResiduePosition},
+    };
+    use nalgebra::Vector3;
+
+    fn structure_from_residues(residues: Vec<Residue>) -> Structure {
+        let mut chain = Chain::new("A");
+        for residue in residues {
+            chain.add_residue(residue);
+        }
+
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+        structure
+    }
+
+    fn standard_residue(name: &str, id: i32, position: ResiduePosition) -> Residue {
+        let template = db::get_template(name)
+            .unwrap_or_else(|| panic!("missing internal template for test residue '{name}'"));
+
+        let mut residue = Residue::new(
+            id,
+            None,
+            name,
+            Some(template.standard_name()),
+            ResidueCategory::Standard,
+        );
+        residue.position = position;
+
+        for (atom_name, element, point) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(atom_name, element, point));
+        }
+
+        for (atom_name, point, _) in template.hydrogens() {
+            residue.add_atom(Atom::new(atom_name, Element::H, point));
+        }
+
+        residue
+    }
+
+    fn translate_residue(residue: &mut Residue, offset: Vector3<f64>) {
+        for atom in residue.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+    }
+
+    fn global_atom_index(
+        topology: &Topology,
+        chain_id: &str,
+        residue_id: i32,
+        atom_name: &str,
+    ) -> usize {
+        let mut idx = 0;
+        for chain in topology.structure().iter_chains() {
+            for residue in chain.iter_residues() {
+                for atom in residue.iter_atoms() {
+                    if chain.id == chain_id && residue.id == residue_id && atom.name == atom_name {
+                        return idx;
+                    }
+                    idx += 1;
+                }
+            }
+        }
+
+        panic!(
+            "atom '{}' not found in chain '{}' residue '{}'",
+            atom_name, chain_id, residue_id
+        );
+    }
+
+    fn has_bond(topology: &Topology, idx1: usize, idx2: usize, order: BondOrder) -> bool {
+        let (a1, a2) = if idx1 <= idx2 {
+            (idx1, idx2)
+        } else {
+            (idx2, idx1)
+        };
+        topology
+            .bonds()
+            .iter()
+            .any(|bond| bond.a1_idx == a1 && bond.a2_idx == a2 && bond.order == order)
+    }
+
+    #[test]
+    fn build_creates_peptide_bond_between_adjacent_proteins() {
+        let residue1 = standard_residue("GLY", 1, ResiduePosition::NTerminal);
+        let mut residue2 = standard_residue("ALA", 2, ResiduePosition::Internal);
+
+        let c_pos = residue1.atom("C").unwrap().pos;
+        let n_pos = residue2.atom("N").unwrap().pos;
+        let target_n = c_pos + Vector3::new(1.33, 0.0, 0.0);
+        translate_residue(&mut residue2, target_n - n_pos);
+
+        let structure = structure_from_residues(vec![residue1, residue2]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let c_idx = global_atom_index(&topology, "A", 1, "C");
+        let n_idx = global_atom_index(&topology, "A", 2, "N");
+
+        assert!(has_bond(&topology, c_idx, n_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_creates_nucleic_backbone_bond() {
+        let residue1 = standard_residue("DA", 1, ResiduePosition::FivePrime);
+        let mut residue2 = standard_residue("DT", 2, ResiduePosition::ThreePrime);
+
+        let o3_pos = residue1.atom("O3'").unwrap().pos;
+        let p_pos = residue2.atom("P").unwrap().pos;
+        let target_p = o3_pos + Vector3::new(0.0, 0.0, 1.6);
+        translate_residue(&mut residue2, target_p - p_pos);
+
+        let structure = structure_from_residues(vec![residue1, residue2]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let o3_idx = global_atom_index(&topology, "A", 1, "O3'");
+        let p_idx = global_atom_index(&topology, "A", 2, "P");
+
+        assert!(has_bond(&topology, o3_idx, p_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_adds_terminal_protein_bonds() {
+        let mut residue = standard_residue("ALA", 1, ResiduePosition::CTerminal);
+        let c_pos = residue.atom("C").unwrap().pos;
+        let oxt_pos = c_pos + Vector3::new(1.24, 0.0, 0.0);
+        let hxt_pos = oxt_pos + Vector3::new(0.96, 0.0, 0.0);
+
+        residue.add_atom(Atom::new("OXT", Element::O, oxt_pos));
+        residue.add_atom(Atom::new("HXT", Element::H, hxt_pos));
+
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let c_idx = global_atom_index(&topology, "A", 1, "C");
+        let oxt_idx = global_atom_index(&topology, "A", 1, "OXT");
+        let hxt_idx = global_atom_index(&topology, "A", 1, "HXT");
+
+        assert!(has_bond(&topology, c_idx, oxt_idx, BondOrder::Single));
+        assert!(has_bond(&topology, oxt_idx, hxt_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_errors_when_required_standard_atom_missing() {
+        let mut residue = standard_residue("GLY", 1, ResiduePosition::Internal);
+        assert!(residue.remove_atom("CA").is_some(), "expected CA atom");
+
+        let structure = structure_from_residues(vec![residue]);
+        let err = TopologyBuilder::new().build(structure).unwrap_err();
+
+        match err {
+            Error::TopologyAtomMissing { atom_name, .. } => assert_eq!(atom_name, "CA"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_errors_when_user_template_missing() {
+        let mut residue = Residue::new(1, None, "LIG", None, ResidueCategory::Hetero);
+        residue.add_atom(Atom::new("C1", Element::C, Point::origin()));
+
+        let structure = structure_from_residues(vec![residue]);
+        let err = TopologyBuilder::new().build(structure).unwrap_err();
+
+        match err {
+            Error::MissingUserTemplate { res_name } => assert_eq!(res_name, "LIG"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_uses_user_template_for_hetero_residue() {
+        let template = Template::new(
+            "LIG",
+            vec!["C1".into(), "O1".into(), "H1".into()],
+            vec![
+                ("C1".into(), "O1".into(), BondOrder::Double),
+                ("C1".into(), "H1".into(), BondOrder::Single),
+            ],
+        );
+
+        let mut residue = Residue::new(1, None, "LIG", None, ResidueCategory::Hetero);
+        residue.add_atom(Atom::new("C1", Element::C, Point::new(0.0, 0.0, 0.0)));
+        residue.add_atom(Atom::new("O1", Element::O, Point::new(1.2, 0.0, 0.0)));
+        residue.add_atom(Atom::new("H1", Element::H, Point::new(-1.0, 0.0, 0.0)));
+
+        let structure = structure_from_residues(vec![residue]);
+        let builder = TopologyBuilder::new().add_template(template);
+        let topology = builder.build(structure).expect("build topology");
+
+        let c_idx = global_atom_index(&topology, "A", 1, "C1");
+        let o_idx = global_atom_index(&topology, "A", 1, "O1");
+        let h_idx = global_atom_index(&topology, "A", 1, "H1");
+
+        assert!(has_bond(&topology, c_idx, o_idx, BondOrder::Double));
+        assert!(has_bond(&topology, c_idx, h_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_creates_disulfide_bond_when_sg_within_cutoff() {
+        let residue1 = standard_residue("CYX", 1, ResiduePosition::Internal);
+        let mut residue2 = standard_residue("CYX", 2, ResiduePosition::Internal);
+
+        let sg1_pos = residue1.atom("SG").unwrap().pos;
+        let sg2_pos = residue2.atom("SG").unwrap().pos;
+        let target = sg1_pos + Vector3::new(2.0, 0.0, 0.0);
+        translate_residue(&mut residue2, target - sg2_pos);
+
+        let structure = structure_from_residues(vec![residue1, residue2]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let sg1_idx = global_atom_index(&topology, "A", 1, "SG");
+        let sg2_idx = global_atom_index(&topology, "A", 2, "SG");
+
+        assert!(has_bond(&topology, sg1_idx, sg2_idx, BondOrder::Single));
+    }
+}
