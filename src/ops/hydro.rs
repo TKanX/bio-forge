@@ -519,3 +519,269 @@ fn calculate_transform(r_pts: &[Point], t_pts: &[Point]) -> Option<(Matrix3<f64>
     let trans = r_center - rot * t_center;
     Some((rot, trans))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        atom::Atom,
+        chain::Chain,
+        residue::Residue,
+        types::{Element, Point, ResidueCategory, ResiduePosition, StandardResidue},
+    };
+
+    fn residue_from_template(name: &str, std: StandardResidue, id: i32) -> Residue {
+        let template = db::get_template(name).unwrap_or_else(|| panic!("missing template {name}"));
+        let mut residue = Residue::new(id, None, name, Some(std), ResidueCategory::Standard);
+        residue.position = ResiduePosition::Internal;
+        for (atom_name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(atom_name, element, pos));
+        }
+        residue
+    }
+
+    fn structure_with_residue(residue: Residue) -> Structure {
+        let mut chain = Chain::new("A");
+        chain.add_residue(residue);
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+        structure
+    }
+
+    fn structure_with_residues(residues: Vec<Residue>) -> Structure {
+        let mut chain = Chain::new("A");
+        for residue in residues {
+            chain.add_residue(residue);
+        }
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+        structure
+    }
+
+    fn n_terminal_residue(id: i32) -> Residue {
+        let mut residue = residue_from_template("ALA", StandardResidue::ALA, id);
+        residue.position = ResiduePosition::NTerminal;
+        residue
+    }
+
+    fn c_terminal_residue(id: i32) -> Residue {
+        let mut residue = residue_from_template("ALA", StandardResidue::ALA, id);
+        residue.position = ResiduePosition::CTerminal;
+        let c_pos = residue.atom("C").expect("C atom").pos;
+        let o_pos = residue.atom("O").expect("O atom").pos;
+        let offset = c_pos - o_pos;
+        let oxt_pos = c_pos + offset;
+        residue.add_atom(Atom::new("OXT", Element::O, oxt_pos));
+        residue
+    }
+
+    #[test]
+    fn titratable_templates_exist_in_database() {
+        let expected = [
+            "ASP", "ASH", "GLU", "GLH", "LYS", "LYN", "ARG", "ARN", "CYS", "CYM", "TYR", "TYM",
+            "HID", "HIE", "HIP",
+        ];
+
+        for name in expected {
+            assert!(
+                db::get_template(name).is_some(),
+                "template {name} should exist"
+            );
+        }
+    }
+
+    #[test]
+    fn determine_protonation_state_tracks_pka_thresholds() {
+        let structure =
+            structure_with_residue(residue_from_template("ASP", StandardResidue::ASP, 1));
+        let mut config = HydroConfig {
+            target_ph: Some(2.5),
+            ..HydroConfig::default()
+        };
+        assert_eq!(
+            determine_protonation_state(&structure, 0, 0, &config),
+            Some("ASH".to_string())
+        );
+
+        config.target_ph = Some(5.0);
+        assert_eq!(
+            determine_protonation_state(&structure, 0, 0, &config),
+            Some("ASP".to_string())
+        );
+
+        let structure =
+            structure_with_residue(residue_from_template("LYS", StandardResidue::LYS, 2));
+        config.target_ph = Some(11.0);
+        assert_eq!(
+            determine_protonation_state(&structure, 0, 0, &config),
+            Some("LYN".to_string())
+        );
+
+        config.target_ph = Some(7.0);
+        assert_eq!(
+            determine_protonation_state(&structure, 0, 0, &config),
+            Some("LYS".to_string())
+        );
+    }
+
+    #[test]
+    fn determine_protonation_state_respects_his_strategy() {
+        let mut residue = residue_from_template("HID", StandardResidue::HIS, 3);
+        residue.name = "HIS".to_string();
+        let structure = structure_with_residue(residue);
+
+        let config = HydroConfig {
+            target_ph: Some(7.0),
+            his_strategy: HisStrategy::DirectHIE,
+            ..HydroConfig::default()
+        };
+
+        assert_eq!(
+            determine_protonation_state(&structure, 0, 0, &config),
+            Some("HIE".to_string())
+        );
+
+        let mut acid_config = HydroConfig::default();
+        acid_config.target_ph = Some(5.5);
+        assert_eq!(
+            determine_protonation_state(&structure, 0, 0, &acid_config),
+            Some("HIP".to_string())
+        );
+    }
+
+    #[test]
+    fn n_terminal_defaults_to_protonated_without_ph() {
+        let residue = n_terminal_residue(40);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 40, None).unwrap();
+        assert!(residue.has_atom("H1"));
+        assert!(residue.has_atom("H2"));
+        assert!(residue.has_atom("H3"));
+    }
+
+    #[test]
+    fn n_terminal_deprotonates_above_pka() {
+        let residue = n_terminal_residue(41);
+        let mut structure = structure_with_residue(residue);
+        let mut config = HydroConfig::default();
+        config.target_ph = Some(9.0);
+
+        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 41, None).unwrap();
+        assert!(residue.has_atom("H1"));
+        assert!(residue.has_atom("H2"));
+        assert!(!residue.has_atom("H3"));
+    }
+
+    #[test]
+    fn c_terminal_protonates_under_acidic_ph() {
+        let residue = c_terminal_residue(50);
+        let mut structure = structure_with_residue(residue);
+        let mut config = HydroConfig::default();
+        config.target_ph = Some(2.5);
+
+        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 50, None).unwrap();
+        assert!(residue.has_atom("HOXT"));
+    }
+
+    #[test]
+    fn c_terminal_remains_deprotonated_at_physiological_ph() {
+        let residue = c_terminal_residue(51);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 51, None).unwrap();
+        assert!(!residue.has_atom("HOXT"));
+    }
+
+    #[test]
+    fn determine_protonation_state_skips_already_marked_cyx() {
+        let mut residue = residue_from_template("CYS", StandardResidue::CYS, 25);
+        residue.name = "CYX".to_string();
+        let structure = structure_with_residue(residue);
+        let mut config = HydroConfig::default();
+        config.target_ph = Some(9.0);
+
+        assert_eq!(determine_protonation_state(&structure, 0, 0, &config), None);
+    }
+
+    #[test]
+    fn add_hydrogens_populates_internal_lysine_side_chain() {
+        let mut residue = residue_from_template("LYS", StandardResidue::LYS, 10);
+        residue.add_atom(Atom::new("FAKE", Element::H, Point::origin()));
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 10, None).unwrap();
+        assert!(residue.has_atom("HZ1"));
+        assert!(residue.has_atom("HZ2"));
+        assert!(residue.has_atom("HZ3"));
+        assert!(!residue.has_atom("FAKE"));
+    }
+
+    #[test]
+    fn add_hydrogens_relabels_asp_under_acidic_ph() {
+        let residue = residue_from_template("ASP", StandardResidue::ASP, 15);
+        let mut structure = structure_with_residue(residue);
+        let mut config = HydroConfig::default();
+        config.target_ph = Some(2.0);
+
+        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 15, None).unwrap();
+        assert_eq!(residue.name, "ASH");
+        assert!(residue.has_atom("HD2"));
+    }
+
+    #[test]
+    fn construct_hydrogens_errors_when_anchor_missing() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = Residue::new(
+            20,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        residue.position = ResiduePosition::Internal;
+
+        let (name, element, pos) = template.heavy_atoms().next().unwrap();
+        residue.add_atom(Atom::new(name, element, pos));
+
+        let err = construct_hydrogens_for_residue(&mut residue, &HydroConfig::default())
+            .expect_err("should fail");
+        assert!(matches!(err, Error::IncompleteResidueForHydro { .. }));
+    }
+
+    #[test]
+    fn close_cysteines_are_relabelled_to_cyx_and_skip_hydrogens() {
+        let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
+        let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
+
+        let sg1 = cys1.atom("SG").expect("SG in cys1").pos;
+        let sg2 = cys2.atom("SG").expect("SG in cys2").pos;
+        let desired = sg1 + Vector3::new(0.5, 0.0, 0.0);
+        let offset = desired - sg2;
+        for atom in cys2.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        let mut structure = structure_with_residues(vec![cys1, cys2]);
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation");
+
+        let res1 = structure.find_residue("A", 30, None).unwrap();
+        let res2 = structure.find_residue("A", 31, None).unwrap();
+        assert_eq!(res1.name, "CYX");
+        assert_eq!(res2.name, "CYX");
+        assert!(!res1.has_atom("HG"));
+        assert!(!res2.has_atom("HG"));
+    }
+}
