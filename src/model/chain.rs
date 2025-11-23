@@ -17,20 +17,25 @@ impl Chain {
 
     pub fn add_residue(&mut self, residue: Residue) {
         debug_assert!(
-            self.residue(residue.id).is_none(),
-            "Attempted to add a duplicate residue ID '{}' to chain '{}'",
+            self.residue(residue.id, residue.insertion_code).is_none(),
+            "Attempted to add a duplicate residue ID '{}' (ic: {:?}) to chain '{}'",
             residue.id,
+            residue.insertion_code,
             self.id
         );
         self.residues.push(residue);
     }
 
-    pub fn residue(&self, id: i32) -> Option<&Residue> {
-        self.residues.iter().find(|r| r.id == id)
+    pub fn residue(&self, id: i32, insertion_code: Option<char>) -> Option<&Residue> {
+        self.residues
+            .iter()
+            .find(|r| r.id == id && r.insertion_code == insertion_code)
     }
 
-    pub fn residue_mut(&mut self, id: i32) -> Option<&mut Residue> {
-        self.residues.iter_mut().find(|r| r.id == id)
+    pub fn residue_mut(&mut self, id: i32, insertion_code: Option<char>) -> Option<&mut Residue> {
+        self.residues
+            .iter_mut()
+            .find(|r| r.id == id && r.insertion_code == insertion_code)
     }
 
     pub fn residues(&self) -> &[Residue] {
@@ -92,6 +97,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -100,8 +106,8 @@ mod tests {
         chain.add_residue(residue);
 
         assert_eq!(chain.residue_count(), 1);
-        assert!(chain.residue(1).is_some());
-        assert_eq!(chain.residue(1).unwrap().name, "ALA");
+        assert!(chain.residue(1, None).is_some());
+        assert_eq!(chain.residue(1, None).unwrap().name, "ALA");
     }
 
     #[test]
@@ -109,13 +115,14 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
         chain.add_residue(residue);
 
-        let retrieved = chain.residue(1);
+        let retrieved = chain.residue(1, None);
 
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, 1);
@@ -126,7 +133,7 @@ mod tests {
     fn chain_residue_returns_none_for_nonexistent_residue() {
         let chain = Chain::new("A");
 
-        let retrieved = chain.residue(999);
+        let retrieved = chain.residue(999, None);
 
         assert!(retrieved.is_none());
     }
@@ -136,13 +143,14 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
         chain.add_residue(residue);
 
-        let retrieved = chain.residue_mut(1);
+        let retrieved = chain.residue_mut(1, None);
 
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, 1);
@@ -152,7 +160,7 @@ mod tests {
     fn chain_residue_mut_returns_none_for_nonexistent_residue() {
         let mut chain = Chain::new("A");
 
-        let retrieved = chain.residue_mut(999);
+        let retrieved = chain.residue_mut(999, None);
 
         assert!(retrieved.is_none());
     }
@@ -162,12 +170,14 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue1 = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
         let residue2 = Residue::new(
             2,
+            None,
             "GLY",
             Some(StandardResidue::GLY),
             ResidueCategory::Standard,
@@ -190,6 +200,7 @@ mod tests {
 
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -211,6 +222,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -225,12 +237,14 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue1 = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
         let residue2 = Residue::new(
             2,
+            None,
             "GLY",
             Some(StandardResidue::GLY),
             ResidueCategory::Standard,
@@ -251,6 +265,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -262,7 +277,7 @@ mod tests {
         }
 
         assert_eq!(
-            chain.residue(1).unwrap().position,
+            chain.residue(1, None).unwrap().position,
             crate::model::types::ResiduePosition::Internal
         );
     }
@@ -272,12 +287,14 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue1 = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
         let mut residue2 = Residue::new(
             2,
+            None,
             "GLY",
             Some(StandardResidue::GLY),
             ResidueCategory::Standard,
@@ -307,6 +324,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -319,7 +337,7 @@ mod tests {
             atom.translate_by(&nalgebra::Vector3::new(1.0, 0.0, 0.0));
         }
 
-        let translated_atom = chain.residue(1).unwrap().atom("CA").unwrap();
+        let translated_atom = chain.residue(1, None).unwrap().atom("CA").unwrap();
         assert!((translated_atom.pos.x - 1.0).abs() < 1e-10);
     }
 
@@ -346,6 +364,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -373,6 +392,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -392,6 +412,7 @@ mod tests {
         let mut chain2 = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -410,8 +431,13 @@ mod tests {
         let mut chain = Chain::new("A");
 
         for i in 1..=3 {
-            let mut residue =
-                Residue::new(i, &format!("RES{}", i), None, ResidueCategory::Standard);
+            let mut residue = Residue::new(
+                i,
+                None,
+                &format!("RES{}", i),
+                None,
+                ResidueCategory::Standard,
+            );
             let atom = Atom::new(
                 &format!("ATOM{}", i),
                 Element::C,
@@ -424,8 +450,38 @@ mod tests {
         assert_eq!(chain.residue_count(), 3);
         assert_eq!(chain.iter_atoms().count(), 3);
 
-        let residue = chain.residue(2).unwrap();
+        let residue = chain.residue(2, None).unwrap();
         assert_eq!(residue.name, "RES2");
         assert_eq!(residue.atom("ATOM2").unwrap().name, "ATOM2");
+    }
+
+    #[test]
+    fn chain_handles_insertion_codes_correctly() {
+        let mut chain = Chain::new("A");
+        let residue1 = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        let residue2 = Residue::new(
+            1,
+            Some('A'),
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+
+        chain.add_residue(residue1);
+        chain.add_residue(residue2);
+
+        assert_eq!(chain.residue_count(), 2);
+        assert!(chain.residue(1, None).is_some());
+        assert!(chain.residue(1, Some('A')).is_some());
+        assert_eq!(
+            chain.residue(1, Some('A')).unwrap().insertion_code,
+            Some('A')
+        );
     }
 }

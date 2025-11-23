@@ -43,13 +43,24 @@ impl Structure {
         self.chains.iter_mut().find(|c| c.id == id)
     }
 
-    pub fn find_residue(&self, chain_id: &str, residue_id: i32) -> Option<&Residue> {
-        self.chain(chain_id).and_then(|c| c.residue(residue_id))
+    pub fn find_residue(
+        &self,
+        chain_id: &str,
+        residue_id: i32,
+        insertion_code: Option<char>,
+    ) -> Option<&Residue> {
+        self.chain(chain_id)
+            .and_then(|c| c.residue(residue_id, insertion_code))
     }
 
-    pub fn find_residue_mut(&mut self, chain_id: &str, residue_id: i32) -> Option<&mut Residue> {
+    pub fn find_residue_mut(
+        &mut self,
+        chain_id: &str,
+        residue_id: i32,
+        insertion_code: Option<char>,
+    ) -> Option<&mut Residue> {
         self.chain_mut(chain_id)
-            .and_then(|c| c.residue_mut(residue_id))
+            .and_then(|c| c.residue_mut(residue_id, insertion_code))
     }
 
     pub fn sort_chains_by_id(&mut self) {
@@ -273,6 +284,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -280,7 +292,7 @@ mod tests {
         chain.add_residue(residue);
         structure.add_chain(chain);
 
-        let found = structure.find_residue("A", 1);
+        let found = structure.find_residue("A", 1, None);
 
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, 1);
@@ -291,7 +303,7 @@ mod tests {
     fn structure_find_residue_returns_none_for_nonexistent_chain() {
         let structure = Structure::new();
 
-        let found = structure.find_residue("NONEXISTENT", 1);
+        let found = structure.find_residue("NONEXISTENT", 1, None);
 
         assert!(found.is_none());
     }
@@ -302,7 +314,7 @@ mod tests {
         let chain = Chain::new("A");
         structure.add_chain(chain);
 
-        let found = structure.find_residue("A", 999);
+        let found = structure.find_residue("A", 999, None);
 
         assert!(found.is_none());
     }
@@ -313,6 +325,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -320,7 +333,7 @@ mod tests {
         chain.add_residue(residue);
         structure.add_chain(chain);
 
-        let found = structure.find_residue_mut("A", 1);
+        let found = structure.find_residue_mut("A", 1, None);
 
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, 1);
@@ -358,12 +371,14 @@ mod tests {
         let mut chain = Chain::new("A");
         chain.add_residue(Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         ));
         chain.add_residue(Residue::new(
             2,
+            None,
             "GLY",
             Some(StandardResidue::GLY),
             ResidueCategory::Standard,
@@ -379,6 +394,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -438,6 +454,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -461,6 +478,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -473,7 +491,11 @@ mod tests {
             atom.translate_by(&nalgebra::Vector3::new(1.0, 0.0, 0.0));
         }
 
-        let translated_atom = structure.find_residue("A", 1).unwrap().atom("CA").unwrap();
+        let translated_atom = structure
+            .find_residue("A", 1, None)
+            .unwrap()
+            .atom("CA")
+            .unwrap();
         assert!((translated_atom.pos.x - 1.0).abs() < 1e-10);
     }
 
@@ -483,6 +505,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -505,6 +528,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -536,6 +560,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -568,6 +593,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,

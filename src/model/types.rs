@@ -188,6 +188,50 @@ pub enum ResiduePosition {
     ThreePrime,
 }
 
+impl StandardResidue {
+    pub fn is_protein(self) -> bool {
+        matches!(
+            self,
+            StandardResidue::ALA
+                | StandardResidue::ARG
+                | StandardResidue::ASN
+                | StandardResidue::ASP
+                | StandardResidue::CYS
+                | StandardResidue::GLN
+                | StandardResidue::GLU
+                | StandardResidue::GLY
+                | StandardResidue::HIS
+                | StandardResidue::ILE
+                | StandardResidue::LEU
+                | StandardResidue::LYS
+                | StandardResidue::MET
+                | StandardResidue::PHE
+                | StandardResidue::PRO
+                | StandardResidue::SER
+                | StandardResidue::THR
+                | StandardResidue::TRP
+                | StandardResidue::TYR
+                | StandardResidue::VAL
+        )
+    }
+
+    pub fn is_nucleic(self) -> bool {
+        matches!(
+            self,
+            StandardResidue::A
+                | StandardResidue::C
+                | StandardResidue::G
+                | StandardResidue::U
+                | StandardResidue::I
+                | StandardResidue::DA
+                | StandardResidue::DC
+                | StandardResidue::DG
+                | StandardResidue::DT
+                | StandardResidue::DI
+        )
+    }
+}
+
 impl BondOrder {
     pub fn value(&self) -> f64 {
         match self {
@@ -1231,5 +1275,21 @@ mod tests {
         assert!(StandardResidue::from_str("").is_err());
         assert!(StandardResidue::from_str("ALA ").is_err());
         assert!(StandardResidue::from_str("INVALID").is_err());
+    }
+
+    #[test]
+    fn standard_residue_is_protein_classifies_correctly() {
+        assert!(StandardResidue::ALA.is_protein());
+        assert!(StandardResidue::GLY.is_protein());
+        assert!(!StandardResidue::HOH.is_protein());
+        assert!(!StandardResidue::A.is_protein());
+    }
+
+    #[test]
+    fn standard_residue_is_nucleic_classifies_correctly() {
+        assert!(StandardResidue::A.is_nucleic());
+        assert!(StandardResidue::DT.is_nucleic());
+        assert!(!StandardResidue::HOH.is_nucleic());
+        assert!(!StandardResidue::GLY.is_nucleic());
     }
 }

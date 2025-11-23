@@ -127,6 +127,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -159,6 +160,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -188,6 +190,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -217,6 +220,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -245,6 +249,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -274,6 +279,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -297,6 +303,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -329,6 +336,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -352,6 +360,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -387,6 +396,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,
@@ -438,6 +448,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "HOH",
             Some(StandardResidue::HOH),
             ResidueCategory::Standard,
@@ -475,6 +486,7 @@ mod tests {
         let mut chain = Chain::new("A");
         let mut residue = Residue::new(
             1,
+            None,
             "ALA",
             Some(StandardResidue::ALA),
             ResidueCategory::Standard,

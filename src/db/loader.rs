@@ -38,7 +38,7 @@ pub fn load_all_templates() -> DataStore {
     load_template!("protein/THR.toml");
     load_template!("protein/TYM.toml");
     load_template!("protein/VAL.toml");
-    load_template!("protein/AR0.toml");
+    load_template!("protein/ARN.toml");
     load_template!("protein/ASH.toml");
     load_template!("protein/ASP.toml");
     load_template!("protein/CYS.toml");
