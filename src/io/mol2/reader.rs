@@ -163,27 +163,23 @@ pub fn read<R: BufRead>(reader: R) -> Result<Template, Error> {
         ));
     }
 
-    if let Some(expected) = expected_atoms {
-        if expected != atom_names.len() {
-            return Err(Error::inconsistent_data(
-                FORMAT,
-                None,
-                format!("Declared {expected} atoms but parsed {}", atom_names.len()),
-            ));
-        }
+    if let Some(expected) = expected_atoms.filter(|&expected| expected != atom_names.len()) {
+        return Err(Error::inconsistent_data(
+            FORMAT,
+            None,
+            format!("Declared {expected} atoms but parsed {}", atom_names.len()),
+        ));
     }
 
-    if let Some(expected) = expected_bonds {
-        if expected != bond_records.len() {
-            return Err(Error::inconsistent_data(
-                FORMAT,
-                None,
-                format!(
-                    "Declared {expected} bonds but parsed {}",
-                    bond_records.len()
-                ),
-            ));
-        }
+    if let Some(expected) = expected_bonds.filter(|&expected| expected != bond_records.len()) {
+        return Err(Error::inconsistent_data(
+            FORMAT,
+            None,
+            format!(
+                "Declared {expected} bonds but parsed {}",
+                bond_records.len()
+            ),
+        ));
     }
 
     let mut bonds = Vec::with_capacity(bond_records.len());
