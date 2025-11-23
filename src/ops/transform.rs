@@ -70,3 +70,112 @@ impl Transform {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Transform;
+    use crate::model::{
+        atom::Atom,
+        chain::Chain,
+        residue::Residue,
+        structure::Structure,
+        types::{Element, Point, ResidueCategory, StandardResidue},
+    };
+
+    fn structure_with_points(points: &[Point]) -> Structure {
+        let mut chain = Chain::new("A");
+        let mut residue = Residue::new(
+            1,
+            None,
+            "GLY",
+            Some(StandardResidue::GLY),
+            ResidueCategory::Standard,
+        );
+
+        for (idx, point) in points.iter().enumerate() {
+            let name = format!("C{}", idx);
+            residue.add_atom(Atom::new(&name, Element::C, *point));
+        }
+
+        chain.add_residue(residue);
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+        structure
+    }
+
+    fn assert_point_close(actual: &Point, expected: &Point) {
+        assert!((actual.x - expected.x).abs() < 1e-6);
+        assert!((actual.y - expected.y).abs() < 1e-6);
+        assert!((actual.z - expected.z).abs() < 1e-6);
+    }
+
+    #[test]
+    fn translate_moves_all_atoms_by_vector() {
+        let mut structure =
+            structure_with_points(&[Point::new(0.0, 0.0, 0.0), Point::new(1.0, 2.0, 3.0)]);
+
+        Transform::translate(&mut structure, 5.0, -2.0, 1.5);
+
+        let mut atoms = structure.iter_atoms();
+        assert_point_close(&atoms.next().unwrap().pos, &Point::new(5.0, -2.0, 1.5));
+        assert_point_close(&atoms.next().unwrap().pos, &Point::new(6.0, 0.0, 4.5));
+    }
+
+    #[test]
+    fn center_geometry_moves_geometric_center_to_target() {
+        let mut structure =
+            structure_with_points(&[Point::new(2.0, 0.0, 0.0), Point::new(4.0, 0.0, 0.0)]);
+
+        Transform::center_geometry(&mut structure, Some(Point::new(10.0, 0.0, 0.0)));
+
+        let center = structure.geometric_center();
+        assert_point_close(&center, &Point::new(10.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn center_mass_moves_center_of_mass_to_origin_by_default() {
+        let mut structure =
+            structure_with_points(&[Point::new(2.0, 0.0, 0.0), Point::new(4.0, 0.0, 0.0)]);
+
+        {
+            let chain = structure.chain_mut("A").unwrap();
+            let residue = chain.residue_mut(1, None).unwrap();
+            residue
+                .iter_atoms_mut()
+                .enumerate()
+                .for_each(|(idx, atom)| {
+                    atom.element = if idx == 0 { Element::H } else { Element::O };
+                });
+        }
+
+        Transform::center_mass(&mut structure, None);
+
+        let com = structure.center_of_mass();
+        assert_point_close(&com, &Point::origin());
+    }
+
+    #[test]
+    fn rotate_z_rotates_atoms_about_origin() {
+        let mut structure =
+            structure_with_points(&[Point::new(1.0, 0.0, 0.0), Point::new(0.0, 2.0, 0.0)]);
+
+        Transform::rotate_z(&mut structure, std::f64::consts::FRAC_PI_2);
+
+        let mut atoms = structure.iter_atoms();
+        assert_point_close(&atoms.next().unwrap().pos, &Point::new(0.0, 1.0, 0.0));
+        assert_point_close(&atoms.next().unwrap().pos, &Point::new(-2.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn rotate_euler_updates_box_vectors() {
+        let mut structure = structure_with_points(&[Point::new(1.0, 0.0, 0.0)]);
+        structure.box_vectors = Some([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]);
+
+        Transform::rotate_euler(&mut structure, 0.0, 0.0, std::f64::consts::FRAC_PI_2);
+
+        let box_vectors = structure.box_vectors.unwrap();
+        assert_point_close(&Point::from(box_vectors[0]), &Point::new(0.0, 1.0, 0.0));
+        assert_point_close(&Point::from(box_vectors[1]), &Point::new(-2.0, 0.0, 0.0));
+        assert_point_close(&Point::from(box_vectors[2]), &Point::new(0.0, 0.0, 3.0));
+    }
+}
