@@ -179,3 +179,128 @@ fn calculate_transform(
 
     Ok((rotation, translation))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        atom::Atom,
+        chain::Chain,
+        residue::Residue,
+        types::{Element, Point, ResidueCategory, ResiduePosition, StandardResidue},
+    };
+
+    fn add_atom_from_template(
+        residue: &mut Residue,
+        template: db::TemplateView<'_>,
+        atom_name: &str,
+    ) {
+        let (_, element, pos) = template
+            .heavy_atoms()
+            .find(|(name, _, _)| *name == atom_name)
+            .unwrap_or_else(|| panic!("template atom {atom_name} missing"));
+        residue.add_atom(Atom::new(atom_name, element, pos));
+    }
+
+    fn add_hydrogen_from_template(
+        residue: &mut Residue,
+        template: db::TemplateView<'_>,
+        atom_name: &str,
+    ) {
+        let (_, pos, _) = template
+            .hydrogens()
+            .find(|(name, _, _)| *name == atom_name)
+            .unwrap_or_else(|| panic!("template hydrogen {atom_name} missing"));
+        residue.add_atom(Atom::new(atom_name, Element::H, pos));
+    }
+
+    fn standard_residue(name: &str, id: i32, std: StandardResidue) -> Residue {
+        Residue::new(id, None, name, Some(std), ResidueCategory::Standard)
+    }
+
+    #[test]
+    fn repair_residue_rebuilds_missing_heavy_atoms_and_cleans_extras() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = standard_residue("ALA", 1, StandardResidue::ALA);
+        residue.position = ResiduePosition::Internal;
+
+        add_atom_from_template(&mut residue, template, "N");
+        add_atom_from_template(&mut residue, template, "CA");
+        add_hydrogen_from_template(&mut residue, template, "HA");
+        residue.add_atom(Atom::new("FAKE", Element::C, Point::new(5.0, 5.0, 5.0)));
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        for (name, _, _) in template.heavy_atoms() {
+            assert!(residue.has_atom(name), "missing heavy atom {name}");
+        }
+        assert!(
+            residue.has_atom("HA"),
+            "valid hydrogen removed unexpectedly"
+        );
+        assert!(
+            !residue.has_atom("FAKE"),
+            "extraneous atom should be removed"
+        );
+    }
+
+    #[test]
+    fn repair_residue_adds_oxt_for_cterm_protein() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = standard_residue("ALA", 10, StandardResidue::ALA);
+        residue.position = ResiduePosition::CTerminal;
+
+        add_atom_from_template(&mut residue, template, "C");
+        add_atom_from_template(&mut residue, template, "CA");
+        add_atom_from_template(&mut residue, template, "O");
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        let oxt = residue.atom("OXT").expect("OXT should be synthesized");
+        assert_eq!(oxt.element, Element::O);
+    }
+
+    #[test]
+    fn repair_residue_errors_when_no_alignment_atoms_survive() {
+        let mut residue = standard_residue("ALA", 2, StandardResidue::ALA);
+        residue.add_atom(Atom::new("FAKE", Element::C, Point::origin()));
+
+        let err = repair_residue(&mut residue).expect_err("should fail without anchors");
+        match err {
+            Error::AlignmentFailed { .. } => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repair_structure_updates_standard_residues_only() {
+        let template = db::get_template("GLY").expect("template GLY");
+        let mut standard = standard_residue("GLY", 5, StandardResidue::GLY);
+        add_atom_from_template(&mut standard, template, "N");
+        add_atom_from_template(&mut standard, template, "CA");
+
+        let mut hetero = Residue::new(20, None, "LIG", None, ResidueCategory::Hetero);
+        hetero.add_atom(Atom::new("XX", Element::C, Point::new(-1.0, 0.0, 0.0)));
+
+        let mut chain = Chain::new("A");
+        chain.add_residue(standard);
+        chain.add_residue(hetero);
+
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+
+        repair_structure(&mut structure).expect("repair succeeds");
+
+        let chain = structure.chain("A").expect("chain A");
+        let fixed = chain.residue(5, None).unwrap();
+        for (name, _, _) in template.heavy_atoms() {
+            assert!(fixed.has_atom(name), "missing atom {name} after repair");
+        }
+
+        let hetero_after = chain.residue(20, None).unwrap();
+        assert!(
+            hetero_after.has_atom("XX"),
+            "hetero residue should remain untouched"
+        );
+    }
+}
