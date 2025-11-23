@@ -65,6 +65,25 @@ impl Chain {
     pub fn iter_atoms_mut(&mut self) -> impl Iterator<Item = &mut super::atom::Atom> {
         self.residues.iter_mut().flat_map(|r| r.iter_atoms_mut())
     }
+
+    pub fn retain_residues<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&Residue) -> bool,
+    {
+        self.residues.retain(|residue| f(residue));
+    }
+
+    pub fn remove_residue(&mut self, id: i32, insertion_code: Option<char>) -> Option<Residue> {
+        if let Some(index) = self
+            .residues
+            .iter()
+            .position(|r| r.id == id && r.insertion_code == insertion_code)
+        {
+            Some(self.residues.remove(index))
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Display for Chain {
