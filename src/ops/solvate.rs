@@ -303,13 +303,11 @@ fn replace_with_ions(
                 } else {
                     break;
                 }
+            } else if let Some(cation) = config.cations.choose(rng) {
+                *residue = create_cation_residue(res_id, *cation, pos);
+                charge_diff -= cation.charge();
             } else {
-                if let Some(cation) = config.cations.choose(rng) {
-                    *residue = create_cation_residue(res_id, *cation, pos);
-                    charge_diff -= cation.charge();
-                } else {
-                    break;
-                }
+                break;
             }
         }
         attempts += 1;
