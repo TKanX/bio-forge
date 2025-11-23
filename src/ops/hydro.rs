@@ -140,14 +140,11 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
     let mut cys_sulfurs = Vec::new();
     for (c_idx, chain) in structure.iter_chains().enumerate() {
         for (r_idx, residue) in chain.iter_residues().enumerate() {
-            if residue
-                .standard_name
-                .map(|s| s == StandardResidue::CYS)
-                .unwrap_or(false)
-            {
-                if let Some(sg) = residue.atom("SG") {
-                    cys_sulfurs.push((c_idx, r_idx, sg.pos));
-                }
+            if let (true, Some(sg)) = (
+                matches!(residue.standard_name, Some(StandardResidue::CYS)),
+                residue.atom("SG"),
+            ) {
+                cys_sulfurs.push((c_idx, r_idx, sg.pos));
             }
         }
     }
