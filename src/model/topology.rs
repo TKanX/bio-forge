@@ -54,7 +54,7 @@ impl Bond {
     }
 }
 
-/// Bond graph overlay for a [`Structure`](Structure).
+/// Bond graph overlay for a [`Structure`].
 ///
 /// A `Topology` pairs structural coordinates with explicit bonds, enabling neighbor queries,
 /// validation routines, and format writers that require connectivity information.
@@ -90,7 +90,7 @@ impl Topology {
     ///
     /// # Returns
     ///
-    /// Immutable reference to the wrapped [`Structure`](Structure).
+    /// Immutable reference to the wrapped [`Structure`].
     pub fn structure(&self) -> &Structure {
         &self.structure
     }
