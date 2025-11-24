@@ -1,19 +1,43 @@
+//! Rule-driven structure cleanup routines that strip solvent, ions, hydrogens, and
+//! user-specified residues prior to downstream modeling steps.
+//!
+//! The cleaners operate directly on mutable [`Structure`]
+//! instances and honor fine-grained controls such as keep/remove lists so workflows can
+//! standardize inputs before repair, hydrogenation, or topology building.
+
 use crate::model::structure::Structure;
 use crate::model::types::{ResidueCategory, StandardResidue};
 use crate::ops::error::Error;
 use std::collections::HashSet;
 
+/// Configuration switches describing which components should be removed during cleaning.
+///
+/// Every flag maps to a different biological filter (water, ions, heterogens, etc.), and the
+/// string sets allow explicit whitelist/blacklist overrides to preserve ligands of interest.
 #[derive(Debug, Clone, Default)]
 pub struct CleanConfig {
+    /// Strip crystallographic waters (HOH) when `true`.
     pub remove_water: bool,
+    /// Strip ionic residues (category `Ion`) when `true`.
     pub remove_ions: bool,
+    /// Remove hydrogen atoms before structural refinement.
     pub remove_hydrogens: bool,
+    /// Remove heterogen residues (category `Hetero`).
     pub remove_hetero: bool,
+    /// Case-sensitive residue names to always remove, regardless of category.
     pub remove_residue_names: HashSet<String>,
+    /// Case-sensitive residue names to always keep, overriding other rules.
     pub keep_residue_names: HashSet<String>,
 }
 
 impl CleanConfig {
+    /// Convenience constructor that only removes waters.
+    ///
+    /// Useful for workflows that only need to strip solvent boxes before further processing.
+    ///
+    /// # Returns
+    ///
+    /// A [`CleanConfig`] with `remove_water` enabled and all other fields at their defaults.
     pub fn water_only() -> Self {
         Self {
             remove_water: true,
@@ -21,6 +45,13 @@ impl CleanConfig {
         }
     }
 
+    /// Convenience constructor that removes waters and ions simultaneously.
+    ///
+    /// Often used for preparing apo structures prior to topology generation.
+    ///
+    /// # Returns
+    ///
+    /// A [`CleanConfig`] enabling `remove_water` and `remove_ions`.
     pub fn water_and_ions() -> Self {
         Self {
             remove_water: true,
@@ -30,6 +61,24 @@ impl CleanConfig {
     }
 }
 
+/// Applies the cleaning rules to a mutable structure in-place.
+///
+/// Hydrogens can be stripped prior to solvation or protonation, and residues matching the
+/// configured filters are removed with chain bookkeeping handled automatically.
+///
+/// # Arguments
+///
+/// * `structure` - Mutable structure that will be filtered.
+/// * `config` - Cleaning switches describing which components to remove or keep.
+///
+/// # Returns
+///
+/// `Ok(())` when the structure is processed successfully.
+///
+/// # Errors
+///
+/// Currently never returns [`Error`] variants but reserves the signature for future
+/// validation failures to stay compatible with other ops APIs.
 pub fn clean_structure(structure: &mut Structure, config: &CleanConfig) -> Result<(), Error> {
     if config.remove_hydrogens {
         for chain in structure.iter_chains_mut() {
