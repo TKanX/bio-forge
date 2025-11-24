@@ -22,7 +22,7 @@
 
 ## Quick Start
 
-BioForge is currently distributed as a library crate. Add it to your `Cargo.toml` and bring the traits and helpers you need into scope.
+BioForge is currently distributed as a library crate. Add it to your `Cargo.toml` dependencies:
 
 ```toml
 [dependencies]
