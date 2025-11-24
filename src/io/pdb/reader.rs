@@ -1,3 +1,9 @@
+//! PDB structure reader that normalizes chain ordering, residue templates, and metadata.
+//!
+//! The parser ingests legacy PDB records, applies `IoContext` aliasing to residues, filters
+//! alternate locations by occupancy, and emits a fully linked [`Structure`] with terminal
+//! classifications and optional unit-cell vectors.
+
 use crate::io::context::IoContext;
 use crate::io::error::Error;
 use crate::model::{
@@ -12,19 +18,67 @@ use std::io::BufRead;
 use std::path::Path;
 use std::str::FromStr;
 
+/// Composite key that uniquely identifies residues during the parsing pass.
+///
+/// Keeps chain ID, sequence number, and optional insertion code grouped together for
+/// deterministic ordering while buffering atoms.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct ResKey {
+    /// Chain identifier token exactly as seen in the PDB file.
     chain_id: String,
+    /// Residue sequence number parsed from columns 23‑26.
     res_seq: i32,
+    /// Insertion code used to disambiguate residues sharing the same `res_seq`.
     i_code: Option<char>,
 }
 
+/// Temporary residue buffer that holds atoms prior to canonicalization.
+///
+/// The parser collects all atoms for a residue, tracks whether it originated from an
+/// `HETATM` record, and remembers the original residue name so the [`IoContext`] can map it
+/// to standardized nomenclature.
 struct TempResidue {
+    /// Raw residue name as it appeared in the source file.
     raw_name: String,
+    /// Indicates if the residue was described via an `HETATM` entry.
     is_hetatm: bool,
+    /// Atom table keyed by atom name with occupancy values for altloc filtering.
     atoms: HashMap<String, (f64, Atom)>,
 }
 
+/// Parses a legacy PDB stream into a [`Structure`] using the supplied IO context.
+///
+/// The routine supports unit-cell (`CRYST1`) records, alternate locations (keeps the highest
+/// occupancy), residue aliasing via [`IoContext`], and terminal classification for polymers.
+///
+/// # Arguments
+///
+/// * `reader` - Any buffered reader that yields PDB lines.
+/// * `context` - Lookup tables and alias mappings that normalize residue names.
+///
+/// # Returns
+///
+/// A populated [`Structure`] containing chains, residues, atoms, and optional box vectors.
+///
+/// # Errors
+///
+/// Returns [`Error`] when encountering malformed numeric fields, unknown standard residues,
+/// inconsistent unit-cell parameters, or IO failures from the underlying reader.
+///
+/// # Examples
+///
+/// ```
+/// use bio_forge::io::{read_pdb_structure, IoContext};
+/// use std::io::Cursor;
+///
+/// let pdb = "\
+/// ATOM      1  N   GLY A   1       0.000   0.000   0.000  1.00 20.00           N\n\
+/// END\n";
+/// let mut cursor = Cursor::new(pdb.as_bytes());
+/// let structure = read_pdb_structure(&mut cursor, &IoContext::new_default()).unwrap();
+/// assert_eq!(structure.chain_count(), 1);
+/// assert_eq!(structure.residue_count(), 1);
+/// ```
 pub fn read<R: BufRead>(reader: R, context: &IoContext) -> Result<Structure, Error> {
     let mut structure = Structure::new();
 
@@ -92,6 +146,19 @@ pub fn read<R: BufRead>(reader: R, context: &IoContext) -> Result<Structure, Err
     Ok(structure)
 }
 
+/// Parses an `ATOM`/`HETATM` line and updates the buffered residue map.
+///
+/// # Arguments
+///
+/// * `line` - Raw PDB record line.
+/// * `line_num` - Current line number for diagnostics.
+/// * `is_hetatm` - Indicates whether the record originated from `HETATM`.
+/// * `chain_order` - Preserves the encounter order of chains.
+/// * `chain_map` - Aggregates temporary residues keyed by [`ResKey`].
+///
+/// # Returns
+///
+/// [`Ok`] on successful parsing; [`Error`] if numeric fields are malformed or lines are too short.
 fn parse_atom_record(
     line: &str,
     line_num: usize,
@@ -196,6 +263,20 @@ fn parse_atom_record(
     Ok(())
 }
 
+/// Converts a `CRYST1` record into orthogonal box vectors.
+///
+/// # Arguments
+///
+/// * `line` - Raw `CRYST1` text line.
+/// * `line_num` - Current line number for error messages.
+///
+/// # Returns
+///
+/// A 3×3 matrix of cell vectors expressed in ångströms.
+///
+/// # Errors
+///
+/// Emits [`Error::InconsistentData`] when cell edges are zero or the line is underspecified.
 fn parse_cryst1(line: &str, line_num: usize) -> Result<[[f64; 3]; 3], Error> {
     if line.len() < 54 {
         return Err(Error::parse(
@@ -254,6 +335,10 @@ fn parse_cryst1(line: &str, line_num: usize) -> Result<[[f64; 3]; 3], Error> {
     Ok([[v1_x, v1_y, v1_z], [v2_x, v2_y, v2_z], [v3_x, v3_y, v3_z]])
 }
 
+/// Infers an element symbol from an atom name when columns 77‑78 are blank.
+///
+/// Strips non-alphabetic characters, tries two-letter, then single-letter lookups, and
+/// ultimately falls back to [`Element::Unknown`].
 fn parse_element_from_name(name: &str) -> Element {
     let name = name.trim();
     let mut symbol = String::new();
@@ -278,6 +363,16 @@ fn parse_element_from_name(name: &str) -> Element {
     Element::Unknown
 }
 
+/// Assigns a residue category using template matches or heuristics.
+///
+/// Standard templates override everything else. Pure `ATOM` residues without templates
+/// trigger an error to protect canonical polymer expectations, while `HETATM` residues are
+/// differentiated by atom count to detect ions.
+///
+/// # Returns
+///
+/// The chosen [`ResidueCategory`] or an [`Error::UnknownStandardResidue`] for unmapped
+/// standard residues.
 fn determine_category(
     is_hetatm: bool,
     std_enum: Option<StandardResidue>,
@@ -303,6 +398,10 @@ fn determine_category(
     }
 }
 
+/// Updates residue positional annotations (N/C terminus, 5'/3', etc.).
+///
+/// The algorithm locates the first/last polymer residues within each chain (excluding water
+/// and heterogens) and marks termini based on whether the polymer is protein or nucleic.
 fn calculate_residue_positions(structure: &mut Structure) {
     for chain in structure.iter_chains_mut() {
         let polymer_indices: Vec<usize> = chain
