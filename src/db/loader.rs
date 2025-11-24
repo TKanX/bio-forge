@@ -163,7 +163,7 @@ mod tests {
         let mut templates = HashMap::new();
         let content = create_minimal_template("TEST", "ALA");
 
-        let result = load_template_from_content(&content, &mut templates);
+        let result = load_template_from_content(content.as_str(), &mut templates);
 
         assert!(result.is_ok());
         assert_eq!(templates.len(), 1);
@@ -180,7 +180,7 @@ mod tests {
         let mut templates = HashMap::new();
         let content = create_template_with_bonds("BONDED", "GLY");
 
-        let result = load_template_from_content(&content, &mut templates);
+        let result = load_template_from_content(content.as_str(), &mut templates);
 
         assert!(result.is_ok());
         assert_eq!(templates.len(), 1);
@@ -214,7 +214,7 @@ mod tests {
             anchors = ["C1"]
             "#;
 
-        let result = load_template_from_content(&content, &mut templates);
+        let result = load_template_from_content(content, &mut templates);
 
         assert!(result.is_ok());
         assert_eq!(templates.len(), 1);
@@ -230,12 +230,12 @@ mod tests {
         let mut templates = HashMap::new();
 
         let content1 = create_minimal_template("DUPLICATE", "ALA");
-        let result1 = load_template_from_content(&content1, &mut templates);
+        let result1 = load_template_from_content(content1.as_str(), &mut templates);
         assert!(result1.is_ok());
         assert_eq!(templates.len(), 1);
 
         let content2 = create_minimal_template("DUPLICATE", "GLY");
-        let result2 = load_template_from_content(&content2, &mut templates);
+        let result2 = load_template_from_content(content2.as_str(), &mut templates);
 
         assert!(result2.is_err());
         assert!(
@@ -256,7 +256,7 @@ mod tests {
             charge = 0
             "#;
 
-        let result = load_template_from_content(&invalid_content, &mut templates);
+        let result = load_template_from_content(invalid_content, &mut templates);
 
         assert!(result.is_err());
         assert!(
@@ -277,7 +277,7 @@ mod tests {
             pos = [0.0, 0.0, 0.0]
             "#;
 
-        let result = load_template_from_content(&invalid_content, &mut templates);
+        let result = load_template_from_content(invalid_content, &mut templates);
 
         assert!(result.is_err());
         assert!(
@@ -304,7 +304,7 @@ mod tests {
             pos = [0.0, 0.0, 0.0]
             "#;
 
-        let result = load_template_from_content(&content_with_unknown, &mut templates);
+        let result = load_template_from_content(content_with_unknown, &mut templates);
 
         assert!(result.is_err());
         assert!(
@@ -320,7 +320,7 @@ mod tests {
         let mut templates = HashMap::new();
         let empty_content = "";
 
-        let result = load_template_from_content(&empty_content, &mut templates);
+        let result = load_template_from_content(empty_content, &mut templates);
 
         assert!(result.is_err());
         assert!(
@@ -355,7 +355,6 @@ mod tests {
 
     #[test]
     fn load_template_from_content_preserves_template_data_integrity() {
-        let mut templates = HashMap::new();
         let content = r#"
             [info]
             name = "COMPLEX"
@@ -393,7 +392,8 @@ mod tests {
             order = "Single"
             "#;
 
-        let result = load_template_from_content(&content, &mut templates);
+        let mut templates: HashMap<String, InternalTemplate> = HashMap::new();
+        let result = load_template_from_content(content, &mut templates);
 
         assert!(result.is_ok());
         assert_eq!(templates.len(), 1);
@@ -446,7 +446,7 @@ mod tests {
             order = "Triple"
             "#;
 
-        let result = load_template_from_content(&content, &mut templates);
+        let result = load_template_from_content(content, &mut templates);
 
         assert!(result.is_ok());
         let template = &templates["BONDS"];
@@ -481,7 +481,7 @@ mod tests {
             order = "Aromatic"
             "#;
 
-        let result = load_template_from_content(&content, &mut templates);
+        let result = load_template_from_content(content, &mut templates);
 
         assert!(result.is_ok());
         let template = &templates["AROMATIC"];

@@ -432,7 +432,7 @@ mod tests {
     fn template_view_clone_creates_identical_copy() {
         let mock_template = create_simple_mock_template();
         let view1 = TemplateView::new(&mock_template);
-        let view2 = view1.clone();
+        let view2 = view1;
 
         assert_eq!(view1.name(), view2.name());
         assert_eq!(view1.standard_name(), view2.standard_name());

@@ -163,6 +163,6 @@ mod tests {
         let store1 = get_store();
         let store2 = get_store();
 
-        assert_eq!(std::ptr::eq(store1, store2), true);
+        assert!(std::ptr::eq(store1, store2));
     }
 }
