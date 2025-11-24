@@ -155,6 +155,8 @@ pub fn solvate_structure(structure: &mut Structure, config: &SolvateConfig) -> R
     let water_tmpl = db::get_template("HOH").ok_or(Error::MissingInternalTemplate {
         res_name: "HOH".to_string(),
     })?;
+    let water_name = water_tmpl.name();
+    let water_standard = water_tmpl.standard_name();
 
     let tmpl_o_pos = water_tmpl
         .heavy_atoms()
@@ -184,8 +186,8 @@ pub fn solvate_structure(structure: &mut Structure, config: &SolvateConfig) -> R
                     let mut residue = Residue::new(
                         res_id_counter,
                         None,
-                        "HOH",
-                        Some(StandardResidue::HOH),
+                        water_name,
+                        Some(water_standard),
                         ResidueCategory::Standard,
                     );
 
