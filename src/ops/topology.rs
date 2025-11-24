@@ -1,3 +1,11 @@
+//! Bond topology builder used to reconstruct intra- and inter-residue connectivity.
+//!
+//! The routines in this module consume a fully prepared [`Structure`] and emit a
+//! [`Topology`] that encodes all covalent bonds. Internal templates are used for
+//! standard residues, while callers can provide additional hetero templates.
+//! Beyond template-driven intra-residue bonds, the builder also infers peptide,
+//! nucleic-backbone, terminal, and disulfide bonds using geometric thresholds.
+
 use crate::db;
 use crate::model::{
     structure::Structure,
@@ -8,6 +16,11 @@ use crate::model::{
 use crate::ops::error::Error;
 use std::collections::HashMap;
 
+/// Builder responsible for creating [`Topology`] objects from a [`Structure`].
+///
+/// The builder can augment the internal template database with additional
+/// hetero templates and tweak geometric cutoffs for disulfide, peptide, and
+/// nucleic bonds before running [`TopologyBuilder::build`].
 pub struct TopologyBuilder {
     hetero_templates: HashMap<String, Template>,
     disulfide_bond_cutoff: f64,
@@ -27,21 +40,46 @@ impl Default for TopologyBuilder {
 }
 
 impl TopologyBuilder {
+    /// Creates a builder that uses default cutoffs and no extra templates.
+    ///
+    /// Default cutoffs were chosen to capture typical covalent geometry in
+    /// Ångström. They can be overridden through the builder-style setters.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Registers a new template that will be used for hetero residues.
+    ///
+    /// # Arguments
+    ///
+    /// * `template` - Template describing atoms and bonds for a residue that
+    ///   is classified as `ResidueCategory::Hetero`.
     pub fn add_hetero_template(mut self, template: Template) -> Self {
         self.hetero_templates
             .insert(template.name.clone(), template);
         self
     }
 
+    /// Configures the maximum SG···SG distance allowed for disulfide bonds.
+    ///
+    /// # Arguments
+    ///
+    /// * `cutoff` - Maximum distance in Ångström for connecting cysteine SG
+    ///   atoms.
     pub fn disulfide_cutoff(mut self, cutoff: f64) -> Self {
         self.disulfide_bond_cutoff = cutoff;
         self
     }
 
+    /// Builds a [`Topology`] for the provided structure.
+    ///
+    /// All intra-residue bonds are taken from templates and terminal rules,
+    /// while inter-residue bonds rely on distance checks using the configured
+    /// cutoffs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when a required template or atom is missing.
     pub fn build(self, structure: Structure) -> Result<Topology, Error> {
         let mut bonds = Vec::new();
 
@@ -52,6 +90,8 @@ impl TopologyBuilder {
         Ok(Topology::new(structure, bonds))
     }
 
+    /// Populates bonds that lie within each residue using templates and
+    /// terminal-specific heuristics.
     fn build_intra_residue(
         &self,
         structure: &Structure,
@@ -129,6 +169,8 @@ impl TopologyBuilder {
         Ok(())
     }
 
+    /// Attempts to add a bond and reports informative errors when atoms are
+    /// missing.
     fn try_add_bond(
         &self,
         residue: &crate::model::residue::Residue,
@@ -161,6 +203,7 @@ impl TopologyBuilder {
         }
     }
 
+    /// Returns whether the provided atom is optional for the residue position.
     fn is_optional_terminal_atom(
         &self,
         residue: &crate::model::residue::Residue,
@@ -178,6 +221,8 @@ impl TopologyBuilder {
         }
     }
 
+    /// Adds missing bonds for termini (protein and nucleic acid) that are not
+    /// explicitly listed in templates.
     fn handle_terminal_intra_bonds(
         &self,
         residue: &crate::model::residue::Residue,
@@ -247,6 +292,8 @@ impl TopologyBuilder {
         Ok(())
     }
 
+    /// Connects adjacent residues through peptide, nucleic-backbone, and
+    /// disulfide bonds based on geometry.
     fn build_inter_residue(
         &self,
         structure: &Structure,
@@ -337,6 +384,7 @@ impl TopologyBuilder {
         Ok(())
     }
 
+    /// Adds a bond when the specified atoms are within the provided cutoff.
     fn connect_atoms_if_close(
         &self,
         first: AtomLocator<'_>,
@@ -365,6 +413,7 @@ impl TopologyBuilder {
     }
 }
 
+/// Utility that couples a residue reference with its global atom offset.
 struct AtomLocator<'a> {
     residue: &'a crate::model::residue::Residue,
     offset: usize,
@@ -372,6 +421,7 @@ struct AtomLocator<'a> {
 }
 
 impl<'a> AtomLocator<'a> {
+    /// Creates a locator describing a specific atom inside a residue.
     fn new(residue: &'a crate::model::residue::Residue, offset: usize, atom_name: &'a str) -> Self {
         Self {
             residue,
