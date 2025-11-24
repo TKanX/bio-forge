@@ -1,193 +1,391 @@
+//! Atomic and residue classification primitives shared across the `bio-forge` model layer.
+//!
+//! The module centralizes periodic-table metadata, residue naming conventions, and helper
+//! utilities that are reused by topology builders, IO translators, and downstream
+//! operations such as solvation and hydrogen placement.
+
 use nalgebra::Point3;
 use std::fmt;
 use std::str::FromStr;
 
+/// Cartesian coordinate storing atomic positions in ångströms.
+///
+/// The alias ensures geometric calculations share the exact numeric representation across
+/// IO readers, topology builders, and structure editing utilities.
 pub type Point = Point3<f64>;
 
+/// Periodic table entries supported by `bio-forge`.
+///
+/// Each variant encodes its atomic number in the `repr(u8)` discriminant and provides
+/// conveniences for retrieving standard symbols, heavy-atom classification, and atomic
+/// masses used when exporting coordinates or computing physical properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 #[repr(u8)]
 pub enum Element {
+    /// Hydrogen (Z = 1).
     H = 1,
+    /// Helium (Z = 2).
     He = 2,
+    /// Lithium (Z = 3).
     Li = 3,
+    /// Beryllium (Z = 4).
     Be = 4,
+    /// Boron (Z = 5).
     B = 5,
+    /// Carbon (Z = 6).
     C = 6,
+    /// Nitrogen (Z = 7).
     N = 7,
+    /// Oxygen (Z = 8).
     O = 8,
+    /// Fluorine (Z = 9).
     F = 9,
+    /// Neon (Z = 10).
     Ne = 10,
+    /// Sodium (Z = 11).
     Na = 11,
+    /// Magnesium (Z = 12).
     Mg = 12,
+    /// Aluminum (Z = 13).
     Al = 13,
+    /// Silicon (Z = 14).
     Si = 14,
+    /// Phosphorus (Z = 15).
     P = 15,
+    /// Sulfur (Z = 16).
     S = 16,
+    /// Chlorine (Z = 17).
     Cl = 17,
+    /// Argon (Z = 18).
     Ar = 18,
+    /// Potassium (Z = 19).
     K = 19,
+    /// Calcium (Z = 20).
     Ca = 20,
+    /// Scandium (Z = 21).
     Sc = 21,
+    /// Titanium (Z = 22).
     Ti = 22,
+    /// Vanadium (Z = 23).
     V = 23,
+    /// Chromium (Z = 24).
     Cr = 24,
+    /// Manganese (Z = 25).
     Mn = 25,
+    /// Iron (Z = 26).
     Fe = 26,
+    /// Cobalt (Z = 27).
     Co = 27,
+    /// Nickel (Z = 28).
     Ni = 28,
+    /// Copper (Z = 29).
     Cu = 29,
+    /// Zinc (Z = 30).
     Zn = 30,
+    /// Gallium (Z = 31).
     Ga = 31,
+    /// Germanium (Z = 32).
     Ge = 32,
+    /// Arsenic (Z = 33).
     As = 33,
+    /// Selenium (Z = 34).
     Se = 34,
+    /// Bromine (Z = 35).
     Br = 35,
+    /// Krypton (Z = 36).
     Kr = 36,
+    /// Rubidium (Z = 37).
     Rb = 37,
+    /// Strontium (Z = 38).
     Sr = 38,
+    /// Yttrium (Z = 39).
     Y = 39,
+    /// Zirconium (Z = 40).
     Zr = 40,
+    /// Niobium (Z = 41).
     Nb = 41,
+    /// Molybdenum (Z = 42).
     Mo = 42,
+    /// Technetium (Z = 43).
     Tc = 43,
+    /// Ruthenium (Z = 44).
     Ru = 44,
+    /// Rhodium (Z = 45).
     Rh = 45,
+    /// Palladium (Z = 46).
     Pd = 46,
+    /// Silver (Z = 47).
     Ag = 47,
+    /// Cadmium (Z = 48).
     Cd = 48,
+    /// Indium (Z = 49).
     In = 49,
+    /// Tin (Z = 50).
     Sn = 50,
+    /// Antimony (Z = 51).
     Sb = 51,
+    /// Tellurium (Z = 52).
     Te = 52,
+    /// Iodine (Z = 53).
     I = 53,
+    /// Xenon (Z = 54).
     Xe = 54,
+    /// Cesium (Z = 55).
     Cs = 55,
+    /// Barium (Z = 56).
     Ba = 56,
+    /// Lanthanum (Z = 57).
     La = 57,
+    /// Cerium (Z = 58).
     Ce = 58,
+    /// Praseodymium (Z = 59).
     Pr = 59,
+    /// Neodymium (Z = 60).
     Nd = 60,
+    /// Promethium (Z = 61).
     Pm = 61,
+    /// Samarium (Z = 62).
     Sm = 62,
+    /// Europium (Z = 63).
     Eu = 63,
+    /// Gadolinium (Z = 64).
     Gd = 64,
+    /// Terbium (Z = 65).
     Tb = 65,
+    /// Dysprosium (Z = 66).
     Dy = 66,
+    /// Holmium (Z = 67).
     Ho = 67,
+    /// Erbium (Z = 68).
     Er = 68,
+    /// Thulium (Z = 69).
     Tm = 69,
+    /// Ytterbium (Z = 70).
     Yb = 70,
+    /// Lutetium (Z = 71).
     Lu = 71,
+    /// Hafnium (Z = 72).
     Hf = 72,
+    /// Tantalum (Z = 73).
     Ta = 73,
+    /// Tungsten (Z = 74).
     W = 74,
+    /// Rhenium (Z = 75).
     Re = 75,
+    /// Osmium (Z = 76).
     Os = 76,
+    /// Iridium (Z = 77).
     Ir = 77,
+    /// Platinum (Z = 78).
     Pt = 78,
+    /// Gold (Z = 79).
     Au = 79,
+    /// Mercury (Z = 80).
     Hg = 80,
+    /// Thallium (Z = 81).
     Tl = 81,
+    /// Lead (Z = 82).
     Pb = 82,
+    /// Bismuth (Z = 83).
     Bi = 83,
+    /// Polonium (Z = 84).
     Po = 84,
+    /// Astatine (Z = 85).
     At = 85,
+    /// Radon (Z = 86).
     Rn = 86,
+    /// Francium (Z = 87).
     Fr = 87,
+    /// Radium (Z = 88).
     Ra = 88,
+    /// Actinium (Z = 89).
     Ac = 89,
+    /// Thorium (Z = 90).
     Th = 90,
+    /// Protactinium (Z = 91).
     Pa = 91,
+    /// Uranium (Z = 92).
     U = 92,
+    /// Neptunium (Z = 93).
     Np = 93,
+    /// Plutonium (Z = 94).
     Pu = 94,
+    /// Americium (Z = 95).
     Am = 95,
+    /// Curium (Z = 96).
     Cm = 96,
+    /// Berkelium (Z = 97).
     Bk = 97,
+    /// Californium (Z = 98).
     Cf = 98,
+    /// Einsteinium (Z = 99).
     Es = 99,
+    /// Fermium (Z = 100).
     Fm = 100,
+    /// Mendelevium (Z = 101).
     Md = 101,
+    /// Nobelium (Z = 102).
     No = 102,
+    /// Lawrencium (Z = 103).
     Lr = 103,
+    /// Rutherfordium (Z = 104).
     Rf = 104,
+    /// Dubnium (Z = 105).
     Db = 105,
+    /// Seaborgium (Z = 106).
     Sg = 106,
+    /// Bohrium (Z = 107).
     Bh = 107,
+    /// Hassium (Z = 108).
     Hs = 108,
+    /// Meitnerium (Z = 109).
     Mt = 109,
+    /// Darmstadtium (Z = 110).
     Ds = 110,
+    /// Roentgenium (Z = 111).
     Rg = 111,
+    /// Copernicium (Z = 112).
     Cn = 112,
+    /// Nihonium (Z = 113).
     Nh = 113,
+    /// Flerovium (Z = 114).
     Fl = 114,
+    /// Moscovium (Z = 115).
     Mc = 115,
+    /// Livermorium (Z = 116).
     Lv = 116,
+    /// Tennessine (Z = 117).
     Ts = 117,
+    /// Oganesson (Z = 118).
     Og = 118,
+    /// Placeholder for unsupported or user-defined elements.
     Unknown = 0,
 }
 
+/// Canonical polymer residue names recognized by `bio-forge`.
+///
+/// Variants cover the 20 standard amino acids, the common nucleic acid bases (both RNA and
+/// DNA prefixed forms), inosine, and crystallographic water. Helper methods report whether
+/// a residue belongs to protein or nucleic acid polymers so that operations can branch on
+/// biopolymer type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum StandardResidue {
+    /// Alanine residue (ALA).
     ALA,
+    /// Arginine residue (ARG).
     ARG,
+    /// Asparagine residue (ASN).
     ASN,
+    /// Aspartate residue (ASP).
     ASP,
+    /// Cysteine residue (CYS).
     CYS,
+    /// Glutamine residue (GLN).
     GLN,
+    /// Glutamate residue (GLU).
     GLU,
+    /// Glycine residue (GLY).
     GLY,
+    /// Histidine residue (HIS).
     HIS,
+    /// Isoleucine residue (ILE).
     ILE,
+    /// Leucine residue (LEU).
     LEU,
+    /// Lysine residue (LYS).
     LYS,
+    /// Methionine residue (MET).
     MET,
+    /// Phenylalanine residue (PHE).
     PHE,
+    /// Proline residue (PRO).
     PRO,
+    /// Serine residue (SER).
     SER,
+    /// Threonine residue (THR).
     THR,
+    /// Tryptophan residue (TRP).
     TRP,
+    /// Tyrosine residue (TYR).
     TYR,
+    /// Valine residue (VAL).
     VAL,
+    /// Adenosine residue (A).
     A,
+    /// Cytidine residue (C).
     C,
+    /// Guanosine residue (G).
     G,
+    /// Uridine residue (U).
     U,
+    /// Inosine residue (I).
     I,
+    /// Deoxyadenosine residue (DA).
     DA,
+    /// Deoxycytidine residue (DC).
     DC,
+    /// Deoxyguanosine residue (DG).
     DG,
+    /// Deoxythymidine residue (DT).
     DT,
+    /// Deoxyinosine residue (DI).
     DI,
+    /// Water molecule (HOH).
     HOH,
 }
 
+/// Bond multiplicity definitions used when describing topology edges.
+///
+/// Distinguishes classical single, double, triple, and aromatic delocalized interactions so
+/// that exported formats and force-field derivations can preserve chemical intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum BondOrder {
+    /// Classical single bond.
     Single,
+    /// Double bond with two shared electron pairs.
     Double,
+    /// Triple bond with three shared electron pairs.
     Triple,
+    /// Aromatic bond representing delocalized pi systems.
     Aromatic,
 }
 
+/// High-level classification for residues appearing in a structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResidueCategory {
+    /// Standard polymer residue (protein or nucleic acid).
     Standard,
+    /// Heterogen group such as ligands or modified residues.
     Hetero,
+    /// Free ion such as `Na+` or `Cl-`.
     Ion,
 }
 
+/// Topological context of a residue within a polymer chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResiduePosition {
+    /// No specific positional annotation is available.
     None,
+    /// Residue resides in the middle of a polymer segment.
     Internal,
+    /// Residue occupies the N-terminus of a polypeptide.
     NTerminal,
+    /// Residue occupies the C-terminus of a polypeptide.
     CTerminal,
+    /// Residue lies at the 5' terminus of a nucleic acid.
     FivePrime,
+    /// Residue lies at the 3' terminus of a nucleic acid.
     ThreePrime,
 }
 
+/// Checks whether the residue belongs to the 20 canonical amino acids.
+///
+/// Used by cleaning and repair operations to decide when to apply protein-specific
+/// heuristics (rotamer fitting, backbone rules, etc.).
+///
+/// # Returns
+///
+/// `true` if the residue is part of the protein alphabet.
 impl StandardResidue {
     pub fn is_protein(self) -> bool {
         matches!(
@@ -215,6 +413,14 @@ impl StandardResidue {
         )
     }
 
+    /// Checks whether the residue belongs to the standard nucleic acid alphabet.
+    ///
+    /// Includes RNA (`A`, `C`, `G`, `U`, `I`) and DNA (`DA`, `DC`, `DG`, `DT`, `DI`) forms so
+    /// that sugar-phosphate handling can branch appropriately.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the residue should be treated as a nucleotide.
     pub fn is_nucleic(self) -> bool {
         matches!(
             self,
@@ -233,6 +439,14 @@ impl StandardResidue {
 }
 
 impl BondOrder {
+    /// Converts the bond order to a numeric multiplicity.
+    ///
+    /// The returned value feeds file writers and geometry algorithms that require
+    /// floating-point weights while still preserving the qualitative order.
+    ///
+    /// # Returns
+    ///
+    /// The multiplicity expressed as an `f64` (1.0, 2.0, 3.0, or 1.5 for aromatic).
     pub fn value(&self) -> f64 {
         match self {
             BondOrder::Single => 1.0,
@@ -264,6 +478,13 @@ impl FromStr for BondOrder {
 }
 
 impl ResidueCategory {
+    /// Returns the human-readable label for the category.
+    ///
+    /// Primarily used by reporting layers when generating summaries or warnings in IO logs.
+    ///
+    /// # Returns
+    ///
+    /// The canonical descriptive name of the category.
     pub fn name(&self) -> &'static str {
         match self {
             ResidueCategory::Standard => "Standard Residue",
@@ -293,6 +514,14 @@ impl FromStr for ResidueCategory {
 }
 
 impl ResiduePosition {
+    /// Returns a descriptive name for the positional annotation.
+    ///
+    /// This helper keeps UI messaging and diagnostic logs consistent when reporting
+    /// polymer endpoints.
+    ///
+    /// # Returns
+    ///
+    /// A static string describing the position.
     pub fn name(&self) -> &'static str {
         match self {
             ResiduePosition::None => "None",
@@ -328,6 +557,14 @@ impl FromStr for ResiduePosition {
 }
 
 impl Element {
+    /// Retrieves the IUPAC element symbol.
+    ///
+    /// This is used across file writers to ensure the element column stays normalized
+    /// regardless of how the atom was originally labeled.
+    ///
+    /// # Returns
+    ///
+    /// A static string slice containing the two-character symbol (or `"Unknown"`).
     pub fn symbol(&self) -> &'static str {
         match self {
             Element::H => "H",
@@ -452,10 +689,26 @@ impl Element {
         }
     }
 
+    /// Indicates whether the element is treated as a heavy atom.
+    ///
+    /// Hydrogen is the only light atom; every other element (including `Unknown`) is flagged
+    /// as heavy for the purpose of filtering coordinate exports.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the element is not hydrogen.
     pub fn is_heavy_atom(&self) -> bool {
         !matches!(self, Element::H)
     }
 
+    /// Returns the standard atomic mass in unified atomic mass units.
+    ///
+    /// Values follow IUPAC tables and feed mass-based calculations such as center-of-mass or
+    /// density estimations in solvation operations.
+    ///
+    /// # Returns
+    ///
+    /// The atomic mass expressed as `f64`; `0.0` for `Unknown`.
     pub fn atomic_mass(&self) -> f64 {
         match self {
             Element::H => 1.00794,
