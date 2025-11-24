@@ -88,8 +88,8 @@ impl TopologyBuilder {
                     }
 
                     for (h_name, _, anchors) in tmpl_view.hydrogens() {
-                        if let Some(anchor) = anchors.into_iter().next() {
-                            if residue.has_atom(h_name) {
+                        match anchors.into_iter().next() {
+                            Some(anchor) if residue.has_atom(h_name) => {
                                 self.try_add_bond(
                                     residue,
                                     global_atom_offset,
@@ -99,6 +99,7 @@ impl TopologyBuilder {
                                     bonds,
                                 )?;
                             }
+                            _ => {}
                         }
                     }
 
@@ -187,13 +188,11 @@ impl TopologyBuilder {
             && residue.standard_name.is_some_and(|s| s.is_protein())
         {
             for h_name in ["H1", "H2", "H3"] {
-                if residue.has_atom(h_name) {
-                    if let (Some(h_idx), Some(n_idx)) = (
-                        residue.iter_atoms().position(|a| a.name == h_name),
-                        residue.iter_atoms().position(|a| a.name == "N"),
-                    ) {
-                        bonds.push(Bond::new(offset + h_idx, offset + n_idx, BondOrder::Single));
-                    }
+                if let (Some(h_idx), Some(n_idx)) = (
+                    residue.iter_atoms().position(|a| a.name == h_name),
+                    residue.iter_atoms().position(|a| a.name == "N"),
+                ) {
+                    bonds.push(Bond::new(offset + h_idx, offset + n_idx, BondOrder::Single));
                 }
             }
         }
@@ -201,22 +200,23 @@ impl TopologyBuilder {
         if residue.position == ResiduePosition::CTerminal
             && residue.standard_name.is_some_and(|s| s.is_protein())
         {
-            if let Some(c_idx) = residue.iter_atoms().position(|a| a.name == "C") {
-                if let Some(oxt_idx) = residue.iter_atoms().position(|a| a.name == "OXT") {
-                    bonds.push(Bond::new(
-                        offset + c_idx,
-                        offset + oxt_idx,
-                        BondOrder::Single,
-                    ));
+            let c_idx = residue.iter_atoms().position(|a| a.name == "C");
+            let oxt_idx = residue.iter_atoms().position(|a| a.name == "OXT");
 
-                    for h_name in ["HXT", "HOXT"] {
-                        if let Some(h_idx) = residue.iter_atoms().position(|a| a.name == h_name) {
-                            bonds.push(Bond::new(
-                                offset + oxt_idx,
-                                offset + h_idx,
-                                BondOrder::Single,
-                            ));
-                        }
+            if let (Some(c_idx), Some(oxt_idx)) = (c_idx, oxt_idx) {
+                bonds.push(Bond::new(
+                    offset + c_idx,
+                    offset + oxt_idx,
+                    BondOrder::Single,
+                ));
+
+                for h_name in ["HXT", "HOXT"] {
+                    if let Some(h_idx) = residue.iter_atoms().position(|a| a.name == h_name) {
+                        bonds.push(Bond::new(
+                            offset + oxt_idx,
+                            offset + h_idx,
+                            BondOrder::Single,
+                        ));
                     }
                 }
             }
@@ -225,10 +225,10 @@ impl TopologyBuilder {
         if residue.position == ResiduePosition::FivePrime
             && residue.standard_name.is_some_and(|s| s.is_nucleic())
         {
-            if let (Some(h_idx), Some(o_idx)) = (
-                residue.iter_atoms().position(|a| a.name == "HO5'"),
-                residue.iter_atoms().position(|a| a.name == "O5'"),
-            ) {
+            let ho5_idx = residue.iter_atoms().position(|a| a.name == "HO5'");
+            let o5_idx = residue.iter_atoms().position(|a| a.name == "O5'");
+
+            if let (Some(h_idx), Some(o_idx)) = (ho5_idx, o5_idx) {
                 bonds.push(Bond::new(offset + h_idx, offset + o_idx, BondOrder::Single));
             }
         }
@@ -236,10 +236,10 @@ impl TopologyBuilder {
         if residue.position == ResiduePosition::ThreePrime
             && residue.standard_name.is_some_and(|s| s.is_nucleic())
         {
-            if let (Some(h_idx), Some(o_idx)) = (
-                residue.iter_atoms().position(|a| a.name == "HO3'"),
-                residue.iter_atoms().position(|a| a.name == "O3'"),
-            ) {
+            let ho3_idx = residue.iter_atoms().position(|a| a.name == "HO3'");
+            let o3_idx = residue.iter_atoms().position(|a| a.name == "O3'");
+
+            if let (Some(h_idx), Some(o_idx)) = (ho3_idx, o3_idx) {
                 bonds.push(Bond::new(offset + h_idx, offset + o_idx, BondOrder::Single));
             }
         }
@@ -309,12 +309,15 @@ impl TopologyBuilder {
 
         for (c_idx, chain) in structure.iter_chains().enumerate() {
             for (r_idx, residue) in chain.iter_residues().enumerate() {
-                if matches!(residue.name.as_str(), "CYX" | "CYM") {
-                    if let Some(sg) = residue.atom("SG") {
-                        let offset = residue_offsets[c_idx][r_idx]
-                            + residue.iter_atoms().position(|a| a.name == "SG").unwrap();
-                        sulfur_atoms.push((offset, sg.pos));
+                match residue.name.as_str() {
+                    "CYX" | "CYM" => {
+                        if let Some(sg) = residue.atom("SG") {
+                            let offset = residue_offsets[c_idx][r_idx]
+                                + residue.iter_atoms().position(|a| a.name == "SG").unwrap();
+                            sulfur_atoms.push((offset, sg.pos));
+                        }
                     }
+                    _ => {}
                 }
             }
         }
