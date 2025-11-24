@@ -1,3 +1,9 @@
+//! mmCIF writer utilities that encode structures and topologies into loop-based records.
+//!
+//! The serializer emits `data_` headers, optional `_cell.*` metadata, `_atom_site` rows with
+//! consistent numbering, and `_struct_conn` loops reconstructed from [`Topology`] bonds so
+//! downstream crystallography pipelines can round-trip `bio-forge` structures.
+
 use crate::io::error::Error;
 use crate::model::{
     atom::Atom, residue::Residue, structure::Structure, topology::Topology, types::BondOrder,
@@ -5,6 +11,19 @@ use crate::model::{
 use std::collections::HashMap;
 use std::io::Write;
 
+/// Serializes a [`Structure`] into mmCIF format with optional cell metadata.
+///
+/// The writer emits a `data_` header, `_cell.*` entries when box vectors exist, and a
+/// complete `_atom_site` loop that captures atom identities, entity IDs, and coordinates.
+///
+/// # Arguments
+///
+/// * `writer` - Destination that implements [`Write`].
+/// * `structure` - Source structure providing atoms and unit-cell information.
+///
+/// # Returns
+///
+/// [`Ok`] on success or [`Error`] if any IO operation fails.
 pub fn write_structure<W: Write>(writer: W, structure: &Structure) -> Result<(), Error> {
     let mut ctx = WriterContext::new(writer);
 
@@ -17,6 +36,19 @@ pub fn write_structure<W: Write>(writer: W, structure: &Structure) -> Result<(),
     Ok(())
 }
 
+/// Serializes a [`Topology`] into mmCIF, including `_struct_conn` bond loops.
+///
+/// Coordinates are emitted via [`write_structure`] semantics; additionally, bonds are
+/// converted into `_struct_conn` records with distance and order annotations.
+///
+/// # Arguments
+///
+/// * `writer` - Output sink implementing [`Write`].
+/// * `topology` - Topology containing a structure and bond list to serialize.
+///
+/// # Returns
+///
+/// [`Ok`] when writing succeeds or [`Error`] if IO fails or bonds reference missing atoms.
 pub fn write_topology<W: Write>(writer: W, topology: &Topology) -> Result<(), Error> {
     let mut ctx = WriterContext::new(writer);
     let structure = topology.structure();
@@ -32,6 +64,7 @@ pub fn write_topology<W: Write>(writer: W, topology: &Topology) -> Result<(), Er
     Ok(())
 }
 
+/// Stateful helper that tracks atom numbering and writes mmCIF sections.
 struct WriterContext<W> {
     writer: W,
     current_atom_id: usize,
@@ -39,6 +72,11 @@ struct WriterContext<W> {
 }
 
 impl<W: Write> WriterContext<W> {
+    /// Creates a writer context with cleared indices and serial counters.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - Sink receiving the emitted mmCIF text.
     fn new(writer: W) -> Self {
         Self {
             writer,
@@ -47,12 +85,22 @@ impl<W: Write> WriterContext<W> {
         }
     }
 
+    /// Writes the `data_` block header and separating comment line.
+    ///
+    /// # Returns
+    ///
+    /// [`Ok`] when the header is flushed; [`Error`] if writing fails.
     fn write_header(&mut self) -> Result<(), Error> {
         writeln!(self.writer, "data_bio_forge_export")
             .and_then(|_| writeln!(self.writer, "#"))
             .map_err(|e| Error::from_io(e, None))
     }
 
+    /// Emits `_cell.*` parameters derived from optional box vectors.
+    ///
+    /// # Arguments
+    ///
+    /// * `box_vectors` - Optional orthogonal matrix describing the unit cell.
     fn write_cell(&mut self, box_vectors: Option<[[f64; 3]; 3]>) -> Result<(), Error> {
         if let Some(vectors) = box_vectors {
             let v1 = nalgebra::Vector3::from(vectors[0]);
@@ -88,6 +136,11 @@ impl<W: Write> WriterContext<W> {
         Ok(())
     }
 
+    /// Writes the `_atom_site` loop and assigns mmCIF atom IDs.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Structure whose atoms will be serialized.
     fn write_atoms(&mut self, structure: &Structure) -> Result<(), Error> {
         writeln!(self.writer, "loop_").map_err(|e| Error::from_io(e, None))?;
         writeln!(self.writer, "_atom_site.group_PDB").map_err(|e| Error::from_io(e, None))?;
@@ -147,6 +200,16 @@ impl<W: Write> WriterContext<W> {
         Ok(())
     }
 
+    /// Formats a single `_atom_site` row with quoted identifiers.
+    ///
+    /// # Arguments
+    ///
+    /// * `group_pdb` - Either `"ATOM"` or `"HETATM"`.
+    /// * `atom_id` - Sequential atom identifier.
+    /// * `atom` - Atom providing coordinates and element symbol.
+    /// * `residue` - Residue metadata for labels and auth fields.
+    /// * `chain_id` - Parent chain identifier string.
+    /// * `entity_id` - Numeric entity identifier assigned to the chain.
     fn write_atom_record(
         &mut self,
         group_pdb: &str,
@@ -194,6 +257,16 @@ impl<W: Write> WriterContext<W> {
         .map_err(|e| Error::from_io(e, None))
     }
 
+    /// Serializes topology bonds into `_struct_conn` records with distances.
+    ///
+    /// # Arguments
+    ///
+    /// * `topology` - Topology whose bonds will be emitted.
+    ///
+    /// # Returns
+    ///
+    /// [`Ok`] if all bonds were written or [`Error::InconsistentData`] when atom indices are
+    /// missing because coordinates were not emitted beforehand.
     fn write_connections(&mut self, topology: &Topology) -> Result<(), Error> {
         if topology.bond_count() == 0 {
             return Ok(());
@@ -331,6 +404,18 @@ impl<W: Write> WriterContext<W> {
     }
 }
 
+/// Wraps strings containing whitespace or quotes with CIF-safe quoting.
+///
+/// Empty strings become `?`, single quotes trigger double-quote wrapping, and all other
+/// cases fall back to single quotes.
+///
+/// # Arguments
+///
+/// * `s` - Raw string to sanitize.
+///
+/// # Returns
+///
+/// Quoted string acceptable for mmCIF fields.
 fn quote_string(s: &str) -> String {
     if s.is_empty() {
         return "?".to_string();
