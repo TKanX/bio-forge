@@ -4,7 +4,7 @@
 
 ## Highlights
 
-- **Template-driven accuracy** – thousands of curated TOML templates for standard amino acids, nucleotides, and water guarantee reproducible coordinates, charges, and bonding.
+- **Template-driven accuracy** – curated TOML templates for standard amino acids, nucleotides, and water guarantee reproducible coordinates, charges, and bonding.
 - **Rich structure model** – lightweight `Atom`, `Residue`, `Chain`, and `Structure` types backed by `nalgebra` make geometric operations trivial.
 - **Format interoperability** – buffered readers/writers for PDB, mmCIF, and MOL2 plus error types that surface precise parsing diagnostics.
 - **Preparation pipeline** – cleaning, repairing, protonating, solvation, coordinate transforms, and topology reconstruction share a common `ops::Error` so workflows compose cleanly.
