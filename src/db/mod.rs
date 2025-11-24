@@ -1,9 +1,23 @@
+//! Internal database API exposing read-only views over residue templates.
+//!
+//! Callers obtain [`TemplateView`] handles keyed by template name, enabling topology and IO
+//! layers to iterate atoms, hydrogens, and bonds without cloning the underlying schema.
+
 mod loader;
 mod schema;
 mod store;
 
 use crate::model::types::{BondOrder, Element, Point, StandardResidue};
 
+/// Retrieves a template by its canonical name.
+///
+/// # Arguments
+///
+/// * `name` - Template identifier such as `"ALA"` or `"HOH"`.
+///
+/// # Returns
+///
+/// `Some(TemplateView)` when the template exists, otherwise `None`.
 pub fn get_template(name: &str) -> Option<TemplateView<'_>> {
     store::get_store()
         .templates_by_name
@@ -11,28 +25,54 @@ pub fn get_template(name: &str) -> Option<TemplateView<'_>> {
         .map(TemplateView::new)
 }
 
+/// Lightweight wrapper granting read-only access to a stored template.
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateView<'a> {
     inner: &'a store::InternalTemplate,
 }
 
 impl<'a> TemplateView<'a> {
+    /// Creates a new view from the internal store entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - Reference to the cached template.
     pub fn new(inner: &'a store::InternalTemplate) -> Self {
         Self { inner }
     }
 
+    /// Returns the template's display name.
+    ///
+    /// # Returns
+    ///
+    /// The literal name string stored in the schema.
     pub fn name(&self) -> &'a str {
         &self.inner.schema.info.name
     }
 
+    /// Reports the standard residue enum associated with the template.
+    ///
+    /// # Returns
+    ///
+    /// The [`StandardResidue`] discriminant stored in metadata.
     pub fn standard_name(&self) -> StandardResidue {
         self.inner.schema.info.standard_name
     }
 
+    /// Returns the net integer charge of the residue.
+    ///
+    /// # Returns
+    ///
+    /// Signed charge in electrons.
     pub fn charge(&self) -> i32 {
         self.inner.schema.info.charge
     }
 
+    /// Iterates heavy atoms with their elements and reference coordinates.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding `(name, element, Point)` tuples preserving declaration order.
     pub fn heavy_atoms(&self) -> impl Iterator<Item = (&'a str, Element, Point)> {
         self.inner
             .schema
@@ -41,6 +81,12 @@ impl<'a> TemplateView<'a> {
             .map(|a| (a.name.as_str(), a.element, Point::from(a.pos)))
     }
 
+    /// Iterates hydrogens, their coordinates, and anchor names.
+    ///
+    /// # Returns
+    ///
+    /// An iterator producing `(name, Point, anchor_iter)` tuples where `anchor_iter`
+    /// traverses the heavy-atom anchor names as `&str`.
     pub fn hydrogens(
         &self,
     ) -> impl Iterator<Item = (&'a str, Point, impl Iterator<Item = &'a str>)> {
@@ -53,6 +99,11 @@ impl<'a> TemplateView<'a> {
         })
     }
 
+    /// Iterates bonds as name pairs plus their bond order.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over `(atom1, atom2, BondOrder)` tuples mirroring the schema definition.
     pub fn bonds(&self) -> impl Iterator<Item = (&'a str, &'a str, BondOrder)> {
         self.inner
             .schema
