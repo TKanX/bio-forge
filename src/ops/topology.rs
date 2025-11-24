@@ -9,7 +9,7 @@ use crate::ops::error::Error;
 use std::collections::HashMap;
 
 pub struct TopologyBuilder {
-    user_templates: HashMap<String, Template>,
+    hetero_templates: HashMap<String, Template>,
     disulfide_bond_cutoff: f64,
     peptide_bond_cutoff: f64,
     nucleic_bond_cutoff: f64,
@@ -18,7 +18,7 @@ pub struct TopologyBuilder {
 impl Default for TopologyBuilder {
     fn default() -> Self {
         Self {
-            user_templates: HashMap::new(),
+            hetero_templates: HashMap::new(),
             disulfide_bond_cutoff: 2.2,
             peptide_bond_cutoff: 1.5,
             nucleic_bond_cutoff: 1.8,
@@ -31,8 +31,9 @@ impl TopologyBuilder {
         Self::default()
     }
 
-    pub fn add_template(mut self, template: Template) -> Self {
-        self.user_templates.insert(template.name.clone(), template);
+    pub fn add_hetero_template(mut self, template: Template) -> Self {
+        self.hetero_templates
+            .insert(template.name.clone(), template);
         self
     }
 
@@ -103,8 +104,8 @@ impl TopologyBuilder {
 
                     self.handle_terminal_intra_bonds(residue, global_atom_offset, bonds)?;
                 } else if residue.category == ResidueCategory::Hetero {
-                    let tmpl = self.user_templates.get(&residue.name).ok_or_else(|| {
-                        Error::MissingUserTemplate {
+                    let tmpl = self.hetero_templates.get(&residue.name).ok_or_else(|| {
+                        Error::MissingHeteroTemplate {
                             res_name: residue.name.clone(),
                         }
                     })?;
@@ -285,24 +286,16 @@ impl TopologyBuilder {
                 if let (Some(std1), Some(std2)) = (curr.standard_name, next.standard_name) {
                     if std1.is_protein() && std2.is_protein() {
                         self.connect_atoms_if_close(
-                            curr,
-                            curr_offset,
-                            "C",
-                            next,
-                            next_offset,
-                            "N",
+                            AtomLocator::new(curr, curr_offset, "C"),
+                            AtomLocator::new(next, next_offset, "N"),
                             self.peptide_bond_cutoff,
                             BondOrder::Single,
                             bonds,
                         );
                     } else if std1.is_nucleic() && std2.is_nucleic() {
                         self.connect_atoms_if_close(
-                            curr,
-                            curr_offset,
-                            "O3'",
-                            next,
-                            next_offset,
-                            "P",
+                            AtomLocator::new(curr, curr_offset, "O3'"),
+                            AtomLocator::new(next, next_offset, "P"),
                             self.nucleic_bond_cutoff,
                             BondOrder::Single,
                             bonds,
@@ -343,26 +336,44 @@ impl TopologyBuilder {
 
     fn connect_atoms_if_close(
         &self,
-        res1: &crate::model::residue::Residue,
-        offset1: usize,
-        name1: &str,
-        res2: &crate::model::residue::Residue,
-        offset2: usize,
-        name2: &str,
+        first: AtomLocator<'_>,
+        second: AtomLocator<'_>,
         cutoff: f64,
         order: BondOrder,
         bonds: &mut Vec<Bond>,
     ) {
         if let (Some(idx1), Some(idx2)) = (
-            res1.iter_atoms().position(|a| a.name == name1),
-            res2.iter_atoms().position(|a| a.name == name2),
+            first
+                .residue
+                .iter_atoms()
+                .position(|a| a.name == first.atom_name),
+            second
+                .residue
+                .iter_atoms()
+                .position(|a| a.name == second.atom_name),
         ) {
-            let p1 = res1.atoms()[idx1].pos;
-            let p2 = res2.atoms()[idx2].pos;
+            let p1 = first.residue.atoms()[idx1].pos;
+            let p2 = second.residue.atoms()[idx2].pos;
 
             if nalgebra::distance_squared(&p1, &p2) <= cutoff * cutoff {
-                bonds.push(Bond::new(offset1 + idx1, offset2 + idx2, order));
+                bonds.push(Bond::new(first.offset + idx1, second.offset + idx2, order));
             }
+        }
+    }
+}
+
+struct AtomLocator<'a> {
+    residue: &'a crate::model::residue::Residue,
+    offset: usize,
+    atom_name: &'a str,
+}
+
+impl<'a> AtomLocator<'a> {
+    fn new(residue: &'a crate::model::residue::Residue, offset: usize, atom_name: &'a str) -> Self {
+        Self {
+            residue,
+            offset,
+            atom_name,
         }
     }
 }
