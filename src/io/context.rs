@@ -1,17 +1,40 @@
+//! Residue-name normalization utilities shared across all structure readers and writers.
+//!
+//! This module exposes [`IoContext`], a registry-backed helper that maps thousands of PDB
+//! aliases to canonical residue codes and links those codes to [`StandardResidue`] values.
+//! File parsers call it to ensure consistent downstream handling of polymer types while
+//! exporters reuse it to apply user-provided aliases.
+
 use crate::model::types::StandardResidue;
 use std::collections::HashMap;
 
+/// Canonicalization state for residue names used during IO operations.
+///
+/// [`IoContext`] stores both the alias-to-canonical mapping as well as the
+/// canonical-to-[`StandardResidue`] lookup so that structure builders can translate raw
+/// residue labels into actionable metadata.
 #[derive(Debug, Clone)]
 pub struct IoContext {
+    /// Maps arbitrary residue labels to their canonical three-letter code.
     alias_map: HashMap<String, String>,
+    /// Records which canonical names correspond to standard residues.
     standard_map: HashMap<String, StandardResidue>,
 }
 
 impl IoContext {
+    /// Creates a context pre-populated with the built-in alias registry.
+    ///
+    /// The registry covers variants for protonation, modifications, and common force-field
+    /// naming conventions so that raw files parse into consistent structures.
+    ///
+    /// # Returns
+    ///
+    /// A context instance ready for use by IO helpers and downstream operations.
     pub fn new_default() -> Self {
         let mut alias_map = HashMap::new();
         let mut standard_map = HashMap::new();
 
+        // Registers a canonical residue name and its `StandardResidue` annotation.
         macro_rules! register_standard {
             ($canonical:expr, $enum_val:expr) => {
                 alias_map.insert($canonical.to_string(), $canonical.to_string());
@@ -19,6 +42,7 @@ impl IoContext {
             };
         }
 
+        // Associates an alias with the canonical residue label without tagging it standard.
         macro_rules! register_alias {
             ($alias:expr, $canonical:expr) => {
                 alias_map.insert($alias.to_string(), $canonical.to_string());
@@ -262,18 +286,67 @@ impl IoContext {
         }
     }
 
+    /// Resolves an input residue name to its canonical representative.
+    ///
+    /// When the name is unknown the original string is returned unchanged, preserving
+    /// user-provided labels for heterogens.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Raw residue identifier from an input file.
+    ///
+    /// # Returns
+    ///
+    /// A borrowed string slice representing the canonical code, or the original input when
+    /// no alias mapping exists.
     pub fn resolve_name<'a>(&'a self, name: &'a str) -> &'a str {
         self.alias_map.get(name).map(|s| s.as_str()).unwrap_or(name)
     }
 
+    /// Maps a canonical residue name to its [`StandardResidue`] entry when possible.
+    ///
+    /// Aliases must be resolved first; the lookup only matches canonical keys that were
+    /// registered via [`IoContext::new_default`].
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Canonical residue code returned by [`resolve_name`](Self::resolve_name).
+    ///
+    /// # Returns
+    ///
+    /// `Some(StandardResidue)` when the name matches a known polymer residue, otherwise
+    /// `None` for heterogens and custom ligands.
     pub fn map_to_standard(&self, name: &str) -> Option<StandardResidue> {
         self.standard_map.get(name).copied()
     }
 
+    /// Adds or overrides an alias pointing to a canonical residue name.
+    ///
+    /// This is useful when callers want to supply additional naming conventions without
+    /// rebuilding the default table.
+    ///
+    /// # Arguments
+    ///
+    /// * `alias` - The alternative label to match within input files.
+    /// * `canonical` - The canonical residue code the alias should resolve to.
     pub fn add_alias(&mut self, alias: impl Into<String>, canonical: impl Into<String>) {
         self.alias_map.insert(alias.into(), canonical.into());
     }
 
+    /// Classifies a residue by returning the canonical name plus optional standard metadata.
+    ///
+    /// This combines [`resolve_name`](Self::resolve_name) and
+    /// [`map_to_standard`](Self::map_to_standard) to provide a single lookup step for IO
+    /// pipelines.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw_name` - The residue label read directly from an input structure file.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the canonical residue name as an owned `String` and the optional
+    /// [`StandardResidue`] classification.
     pub fn classify_residue(&self, raw_name: &str) -> (String, Option<StandardResidue>) {
         let canonical = self.resolve_name(raw_name);
         let standard = self.map_to_standard(canonical);
@@ -282,6 +355,11 @@ impl IoContext {
 }
 
 impl Default for IoContext {
+    /// Constructs the default IO context.
+    ///
+    /// # Returns
+    ///
+    /// A direct alias of [`IoContext::new_default`].
     fn default() -> Self {
         Self::new_default()
     }
