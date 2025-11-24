@@ -1,3 +1,9 @@
+//! Reconstructs standard residues so they match reference templates before topology building.
+//!
+//! The repair pipeline removes stray atoms, regenerates missing heavy atoms (including OXT on
+//! C-terminal proteins), and aligns completions using template geometry to ensure downstream
+//! hydrogenation and topology steps operate on canonical coordinates.
+
 use crate::db;
 use crate::model::{
     atom::Atom,
@@ -9,6 +15,22 @@ use crate::ops::error::Error;
 use nalgebra::{Matrix3, Point3, Rotation3, Vector3};
 use std::collections::HashSet;
 
+/// Repairs every standard residue in a structure by invoking [`repair_residue`].
+///
+/// Non-standard residues (heterogens, ions, solvent) are left untouched to avoid tampering
+/// with ligands. Residue iteration happens first to avoid borrowing issues when mutating.
+///
+/// # Arguments
+///
+/// * `structure` - Mutable structure whose standard residues will be normalized.
+///
+/// # Returns
+///
+/// `Ok(())` when all residues are processed successfully.
+///
+/// # Errors
+///
+/// Propagates errors from [`repair_residue`], such as missing templates or alignment issues.
 pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
     let mut targets = Vec::new();
     for chain in structure.iter_chains() {
@@ -28,6 +50,24 @@ pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
     Ok(())
 }
 
+/// Cleans and rebuilds an individual residue using its template definition.
+///
+/// Removes atoms absent from the template, calculates rigid alignment using shared anchors,
+/// and adds back missing heavy atoms (including terminal `OXT` when applicable).
+///
+/// # Arguments
+///
+/// * `residue` - Residue to be normalized.
+///
+/// # Returns
+///
+/// `Ok(())` when the residue matches the template after repair.
+///
+/// # Errors
+///
+/// Returns [`Error::MissingInternalTemplate`] if the residue name lacks a template,
+/// [`Error::AlignmentFailed`] if no anchor atoms remain, or other errors bubbled from
+/// [`calculate_transform`].
 fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
     let template_name = residue.name.clone();
     let template_view =
@@ -101,6 +141,15 @@ fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
     Ok(())
 }
 
+/// Synthesizes an `OXT` position for C-terminal proteins using backbone vectors.
+///
+/// # Arguments
+///
+/// * `view` - Template view providing heavy atom coordinates.
+///
+/// # Returns
+///
+/// Estimated `OXT` coordinate; falls back to the origin if required atoms are absent.
 fn calculate_template_oxt(view: db::TemplateView) -> Point3<f64> {
     let get_pos = |n| {
         view.heavy_atoms()
@@ -124,6 +173,21 @@ fn calculate_template_oxt(view: db::TemplateView) -> Point3<f64> {
     Point3::origin()
 }
 
+/// Computes the best-fit rigid transform mapping template positions to residue coordinates.
+///
+/// Handles one- and two-point special cases before applying Kabsch alignment for larger sets.
+///
+/// # Arguments
+///
+/// * `pairs` - Corresponding residue/template coordinate pairs.
+///
+/// # Returns
+///
+/// Transformation `(rotation, translation)` aligning the template to the residue.
+///
+/// # Errors
+///
+/// Returns [`Error::AlignmentFailed`] when the SVD cannot produce a valid rotation.
 fn calculate_transform(
     pairs: &[(Point3<f64>, Point3<f64>)],
 ) -> Result<(Matrix3<f64>, Vector3<f64>), Error> {
