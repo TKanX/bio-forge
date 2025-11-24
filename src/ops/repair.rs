@@ -15,7 +15,7 @@ use crate::ops::error::Error;
 use nalgebra::{Matrix3, Point3, Rotation3, Vector3};
 use std::collections::HashSet;
 
-/// Repairs every standard residue in a structure by invoking [`repair_residue`].
+/// Repairs every standard residue in a structure by invoking the internal repair logic.
 ///
 /// Non-standard residues (heterogens, ions, solvent) are left untouched to avoid tampering
 /// with ligands. Residue iteration happens first to avoid borrowing issues when mutating.
@@ -30,7 +30,7 @@ use std::collections::HashSet;
 ///
 /// # Errors
 ///
-/// Propagates errors from [`repair_residue`], such as missing templates or alignment issues.
+/// Propagates errors such as missing templates or alignment issues.
 pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
     let mut targets = Vec::new();
     for chain in structure.iter_chains() {
