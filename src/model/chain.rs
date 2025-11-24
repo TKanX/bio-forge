@@ -1,13 +1,39 @@
+//! Ordered residue collections representing biomolecular chains.
+//!
+//! Chains own a sequence of `Residue` records, enforce uniqueness on residue identifiers,
+//! and expose iterator helpers that cascade access down to atoms. Higher-level operations
+//! such as topology repair or solvation treat chains as the primary unit when traversing a
+//! structure.
+
 use super::residue::Residue;
 use std::fmt;
 
+/// Polymer chain containing an ordered list of residues.
+///
+/// The chain preserves the order residues were added, mirrors the chain identifier seen in
+/// structure files (e.g., `"A"`), and provides iteration helpers for both residues and
+/// atoms while keeping the internal storage private.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chain {
+    /// Chain identifier matching the source structure (usually a single character).
     pub id: String,
+    /// Internal storage preserving insertion order for residues.
     residues: Vec<Residue>,
 }
 
 impl Chain {
+    /// Creates an empty chain with the provided identifier.
+    ///
+    /// Use this constructor when building structures procedurally or when importing from
+    /// file formats that enumerate chains.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Label matching the original structure's chain identifier.
+    ///
+    /// # Returns
+    ///
+    /// A new `Chain` with no residues.
     pub fn new(id: &str) -> Self {
         Self {
             id: id.to_string(),
@@ -15,7 +41,16 @@ impl Chain {
         }
     }
 
+    /// Adds a residue to the chain while preventing duplicate identifiers.
+    ///
+    /// Residues are appended in insertion order. Duplicate `(id, insertion_code)` pairs are
+    /// rejected during debug builds to guard against malformed inputs.
+    ///
+    /// # Arguments
+    ///
+    /// * `residue` - The residue to append.
     pub fn add_residue(&mut self, residue: Residue) {
+        // Avoids ambiguous lookups by ensuring each (id, insertion_code) pair is unique.
         debug_assert!(
             self.residue(residue.id, residue.insertion_code).is_none(),
             "Attempted to add a duplicate residue ID '{}' (ic: {:?}) to chain '{}'",
@@ -26,46 +61,114 @@ impl Chain {
         self.residues.push(residue);
     }
 
+    /// Looks up a residue by identifier and optional insertion code.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Residue sequence number.
+    /// * `insertion_code` - Optional insertion code used in PDB/mmCIF records.
+    ///
+    /// # Returns
+    ///
+    /// `Some(&Residue)` if a matching residue exists; otherwise `None`.
     pub fn residue(&self, id: i32, insertion_code: Option<char>) -> Option<&Residue> {
         self.residues
             .iter()
             .find(|r| r.id == id && r.insertion_code == insertion_code)
     }
 
+    /// Fetches a mutable reference to a residue by identifier.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Residue sequence number.
+    /// * `insertion_code` - Optional insertion code qualifier.
+    ///
+    /// # Returns
+    ///
+    /// `Some(&mut Residue)` when present; otherwise `None`.
     pub fn residue_mut(&mut self, id: i32, insertion_code: Option<char>) -> Option<&mut Residue> {
         self.residues
             .iter_mut()
             .find(|r| r.id == id && r.insertion_code == insertion_code)
     }
 
+    /// Returns an immutable slice containing all residues in order.
+    ///
+    /// Useful for bulk analysis or when interfacing with APIs that operate on slices.
+    ///
+    /// # Returns
+    ///
+    /// Slice view of the underlying residue list.
     pub fn residues(&self) -> &[Residue] {
         &self.residues
     }
 
+    /// Reports the number of residues stored in the chain.
+    ///
+    /// # Returns
+    ///
+    /// Count of residues currently tracked.
     pub fn residue_count(&self) -> usize {
         self.residues.len()
     }
 
+    /// Indicates whether the chain contains no residues.
+    ///
+    /// # Returns
+    ///
+    /// `true` when the chain is empty.
     pub fn is_empty(&self) -> bool {
         self.residues.is_empty()
     }
 
+    /// Provides an iterator over immutable residue references.
+    ///
+    /// This mirrors `residues()` but avoids exposing slice internals and composes nicely with
+    /// iterator adaptors.
+    ///
+    /// # Returns
+    ///
+    /// A standard slice iterator over `Residue` references.
     pub fn iter_residues(&self) -> std::slice::Iter<'_, Residue> {
         self.residues.iter()
     }
 
+    /// Provides an iterator over mutable residue references.
+    ///
+    /// # Returns
+    ///
+    /// A mutable slice iterator that allows in-place modifications.
     pub fn iter_residues_mut(&mut self) -> std::slice::IterMut<'_, Residue> {
         self.residues.iter_mut()
     }
 
+    /// Iterates over all atoms contained in the chain.
+    ///
+    /// Residues are traversed in order and their atom iterators flattened, yielding atoms in
+    /// the same relative ordering seen in the original structure.
+    ///
+    /// # Returns
+    ///
+    /// Iterator that yields immutable `Atom` references.
     pub fn iter_atoms(&self) -> impl Iterator<Item = &super::atom::Atom> {
         self.residues.iter().flat_map(|r| r.iter_atoms())
     }
 
+    /// Iterates over all atoms with mutable access.
+    ///
+    /// # Returns
+    ///
+    /// Iterator producing mutable `Atom` references for bulk editing operations.
     pub fn iter_atoms_mut(&mut self) -> impl Iterator<Item = &mut super::atom::Atom> {
         self.residues.iter_mut().flat_map(|r| r.iter_atoms_mut())
     }
 
+    /// Retains only residues that satisfy the provided predicate.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Predicate invoked for each residue; keep the residue when it returns `true`.
     pub fn retain_residues<F>(&mut self, mut f: F)
     where
         F: FnMut(&Residue) -> bool,
@@ -73,6 +176,16 @@ impl Chain {
         self.residues.retain(|residue| f(residue));
     }
 
+    /// Removes a residue by identifier and returns ownership if found.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Residue number to remove.
+    /// * `insertion_code` - Optional insertion qualifier.
+    ///
+    /// # Returns
+    ///
+    /// `Some(Residue)` containing the removed residue; otherwise `None`.
     pub fn remove_residue(&mut self, id: i32, insertion_code: Option<char>) -> Option<Residue> {
         if let Some(index) = self
             .residues
