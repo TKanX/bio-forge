@@ -15,13 +15,14 @@ mod model;
 
 pub mod io;
 pub mod ops;
+pub mod templates;
 
-pub use crate::model::atom::Atom;
-pub use crate::model::chain::Chain;
-pub use crate::model::residue::Residue;
-pub use crate::model::structure::Structure;
-pub use crate::model::template::Template;
-pub use crate::model::topology::{Bond, Topology};
-pub use crate::model::types::{
+pub use model::atom::Atom;
+pub use model::chain::Chain;
+pub use model::residue::Residue;
+pub use model::structure::Structure;
+pub use model::template::Template;
+pub use model::topology::{Bond, Topology};
+pub use model::types::{
     BondOrder, Element, Point, ResidueCategory, ResiduePosition, StandardResidue,
 };
