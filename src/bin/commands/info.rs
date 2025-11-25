@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, Write};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -104,10 +104,14 @@ fn print_tables(
     box_metrics: Option<&BoxMetrics>,
     total_charge: i32,
 ) -> Result<()> {
-    let mut stderr = io::stderr();
+    let mut stderr = io::stderr().lock();
+
+    print_boxed_label(&mut stderr, "BioForge Structure Report")?;
+    writeln!(&mut stderr)?;
 
     let mut chain_table = Table::new();
-    chain_table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    print_boxed_label(&mut stderr, "Chain Breakdown")?;
+    chain_table.set_format(*format::consts::FORMAT_BOX_CHARS);
     chain_table.set_titles(row!["Chain", "Residues", "Atoms", "Polymer Type"]);
     for report in reports {
         chain_table.add_row(row![
@@ -120,9 +124,11 @@ fn print_tables(
     chain_table
         .print(&mut stderr)
         .context("Failed to render chain summary")?;
+    writeln!(&mut stderr)?;
 
     let mut summary_table = Table::new();
-    summary_table.set_format(*format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR);
+    print_boxed_label(&mut stderr, "Structure Summary")?;
+    summary_table.set_format(*format::consts::FORMAT_BOX_CHARS);
     summary_table.set_titles(row!["Metric", "Value"]);
 
     if let Some(metrics) = box_metrics {
@@ -153,6 +159,15 @@ fn print_tables(
         .print(&mut stderr)
         .context("Failed to render structure summary")?;
 
+    Ok(())
+}
+
+fn print_boxed_label<W: Write>(writer: &mut W, title: &str) -> io::Result<()> {
+    let inner = format!(" {title} ");
+    let width = inner.chars().count();
+    writeln!(writer, "╭{}╮", "─".repeat(width))?;
+    writeln!(writer, "│{}│", inner)?;
+    writeln!(writer, "╰{}╯", "─".repeat(width))?;
     Ok(())
 }
 
