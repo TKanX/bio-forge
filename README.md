@@ -30,7 +30,7 @@ Once the `bioforge` binary is installed, you can repair a structure in a single 
 bioforge repair -i input.pdb -o repaired.pdb
 ```
 
-Explore the complete preparation pipeline in the [user manual](MANUAL.md) and browse the [examples](examples/) directory for runnable walkthroughs.
+Explore the complete preparation pipeline in the [user manual](MANUAL.md) and browse the [examples directory](https://github.com/TKanX/bio-forge/tree/main/examples) for runnable walkthroughs.
 
 ### For Library Developers
 
@@ -81,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Documentation
 
+- [CLI User Manual](MANUAL.md) – detailed explanation of command-line usage and options.
 - [API Documentation](https://docs.rs/bio-forge) – comprehensive reference for public types and functions.
 - [Architecture Overview](ARCHITECTURE.md) – detailed explanation of the internal design and algorithms used in BioForge.
 
