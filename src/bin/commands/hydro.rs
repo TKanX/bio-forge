@@ -47,10 +47,11 @@ impl From<HistidineStrategy> for HisStrategy {
 /// Hydrogenates the structure using the configured options.
 pub fn run(structure: &mut Structure, args: &HydroArgs) -> Result<()> {
     run_with_spinner("Adding hydrogens", || {
-        let mut config = HydroConfig::default();
-        config.target_ph = args.ph;
-        config.remove_existing_h = !args.no_strip;
-        config.his_strategy = args.his.into();
+        let config = HydroConfig {
+            target_ph: args.ph,
+            remove_existing_h: !args.no_strip,
+            his_strategy: args.his.into(),
+        };
 
         add_hydrogens(structure, &config).context("Failed to add hydrogens")
     })
