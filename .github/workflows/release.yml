@@ -58,10 +58,10 @@ jobs:
           RELEASE_VERSION=$(echo "${{ github.ref_name }}" | sed 's/v//')
 
           if [[ "${{ matrix.target }}" == *"-windows-"* ]]; then
-            BINARY_NAME="cheq.exe"
+            BINARY_NAME="bioforge.exe"
             ARCHIVE_NAME="${{ env.BINARY_PREFIX }}-v${RELEASE_VERSION}-${{ matrix.target }}.zip"
           else
-            BINARY_NAME="cheq"
+            BINARY_NAME="bioforge"
             ARCHIVE_NAME="${{ env.BINARY_PREFIX }}-v${RELEASE_VERSION}-${{ matrix.target }}.tar.gz"
           fi
 
