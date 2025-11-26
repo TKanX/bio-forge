@@ -149,7 +149,7 @@ Option:
 
 ## Workflow Examples
 
-Please refer to the [examples directory](./examples) for end-to-end usage scenarios demonstrating both single-command-per-stage and streaming pipeline approaches.
+Please refer to the [examples directory](https://github.com/TKanX/bio-forge/tree/main/examples) for end-to-end usage scenarios demonstrating both single-command-per-stage and streaming pipeline approaches.
 
 ---
 
