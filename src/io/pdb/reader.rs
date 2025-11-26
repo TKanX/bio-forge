@@ -380,10 +380,11 @@ fn parse_element_from_name(field: &str) -> Element {
         let (first_idx, first_char) = letters[0];
         let (second_idx, second_char) = letters[1];
         let contiguous = second_idx == first_idx + first_char.len_utf8();
-        if first_idx == 0 && contiguous {
-            if let Some(el) = parse_pair(first_char, second_char) {
-                return el;
-            }
+        if let Some(el) = (first_idx == 0 && contiguous)
+            .then(|| parse_pair(first_char, second_char))
+            .flatten()
+        {
+            return el;
         }
     }
 
@@ -396,10 +397,11 @@ fn parse_element_from_name(field: &str) -> Element {
             let (first_idx, first_char) = window[0];
             let (second_idx, second_char) = window[1];
             let contiguous = second_idx == first_idx + first_char.len_utf8();
-            if contiguous {
-                if let Some(el) = parse_pair(first_char, second_char) {
-                    return el;
-                }
+            if let Some(el) = contiguous
+                .then(|| parse_pair(first_char, second_char))
+                .flatten()
+            {
+                return el;
             }
             if let Some(el) = parse_single(second_char) {
                 return el;
