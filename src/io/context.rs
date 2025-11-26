@@ -180,6 +180,7 @@ impl IoContext {
         register_alias!("NMC", "GLY");
         register_alias!("SAR", "GLY");
 
+        register_alias!("HSD", "HID");
         register_alias!("HIS", "HID");
         register_alias!("3AH", "HID");
         register_alias!("DHI", "HID");
@@ -187,6 +188,8 @@ impl IoContext {
         register_alias!("MHS", "HID");
         register_alias!("NEM", "HID");
         register_alias!("NEP", "HID");
+
+        register_alias!("HSE", "HIE");
 
         register_alias!("DIL", "ILE");
         register_alias!("IIL", "ILE");
