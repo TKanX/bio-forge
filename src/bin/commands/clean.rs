@@ -32,13 +32,14 @@ pub struct CleanArgs {
 /// Applies cleanup rules to the provided structure.
 pub fn run(structure: &mut Structure, args: &CleanArgs) -> Result<()> {
     run_with_spinner("Cleaning structure", || {
-        let mut config = CleanConfig::default();
-        config.remove_water = args.water;
-        config.remove_ions = args.ions;
-        config.remove_hydrogens = args.hydrogens;
-        config.remove_hetero = args.hetero;
-        config.keep_residue_names = build_name_set(&args.keep);
-        config.remove_residue_names = build_name_set(&args.remove);
+        let config = CleanConfig {
+            remove_water: args.water,
+            remove_ions: args.ions,
+            remove_hydrogens: args.hydrogens,
+            remove_hetero: args.hetero,
+            keep_residue_names: build_name_set(&args.keep),
+            remove_residue_names: build_name_set(&args.remove),
+        };
 
         clean_structure(structure, &config).context("Failed to clean structure")?;
         Ok(())
