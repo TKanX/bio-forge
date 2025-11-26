@@ -15,7 +15,7 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 #### Option 2: Cargo Install (from source)
 
 ```bash
-cargo install bioforge
+cargo install bio-forge
 ```
 
 ### Input & Output Basics
