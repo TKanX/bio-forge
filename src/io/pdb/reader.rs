@@ -514,7 +514,7 @@ fn calculate_residue_positions(structure: &mut Structure) {
 mod tests {
     use super::*;
     use crate::io::context::IoContext;
-    use crate::model::types::{ResidueCategory, ResiduePosition, StandardResidue};
+    use crate::model::types::{Element, ResidueCategory, ResiduePosition, StandardResidue};
     use std::io::Cursor;
 
     fn parse_structure(pdb: &str) -> Structure {
@@ -767,5 +767,21 @@ mod tests {
             }
             other => panic!("expected UnknownStandardResidue error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_element_handles_common_atom_name_patterns() {
+        assert_eq!(parse_element_from_name(" CA "), Element::C);
+        assert_eq!(parse_element_from_name(" N  "), Element::N);
+        assert_eq!(parse_element_from_name(" C1 "), Element::C);
+        assert_eq!(parse_element_from_name("1HG1"), Element::H);
+        assert_eq!(parse_element_from_name(" HG "), Element::H);
+        assert_eq!(parse_element_from_name("FE  "), Element::Fe);
+        assert_eq!(parse_element_from_name("ZN  "), Element::Zn);
+        assert_eq!(parse_element_from_name("BR  "), Element::Br);
+        assert_eq!(parse_element_from_name("CL  "), Element::Cl);
+        assert_eq!(parse_element_from_name("HG  "), Element::Hg);
+        assert_eq!(parse_element_from_name("Se  "), Element::Se);
+        assert_eq!(parse_element_from_name("XE  "), Element::Xe);
     }
 }
