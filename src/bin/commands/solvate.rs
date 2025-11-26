@@ -39,12 +39,14 @@ pub struct SolvateArgs {
 /// Applies the solvation routine with configured padding, ions, and RNG seed.
 pub fn run(structure: &mut Structure, args: &SolvateArgs) -> Result<()> {
     run_with_spinner("Solvating structure", || {
-        let mut config = SolvateConfig::default();
-        config.margin = args.margin;
-        config.water_spacing = args.spacing;
-        config.cations = vec![parse_cation(&args.cation)?];
-        config.anions = vec![parse_anion(&args.anion)?];
-        config.rng_seed = args.seed;
+        let mut config = SolvateConfig {
+            margin: args.margin,
+            water_spacing: args.spacing,
+            cations: vec![parse_cation(&args.cation)?],
+            anions: vec![parse_anion(&args.anion)?],
+            rng_seed: args.seed,
+            ..SolvateConfig::default()
+        };
 
         let solute_charge = estimate_structure_charge(structure);
         config.target_charge = if let Some(target) = args.target_charge {
