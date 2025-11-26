@@ -22,14 +22,26 @@
 
 ## Quick Start
 
-BioForge is currently distributed as a library crate. Add it to your `Cargo.toml` dependencies:
+### For CLI Users
+
+Once the `bioforge` binary is installed, you can repair a structure in a single step:
+
+```bash
+bioforge repair -i input.pdb -o repaired.pdb
+```
+
+Explore the complete preparation pipeline in the [user manual](MANUAL.md) and browse the [examples](examples/) directory for runnable walkthroughs.
+
+### For Library Developers
+
+BioForge is also available as a library crate. Add it to your `Cargo.toml` dependencies:
 
 ```toml
 [dependencies]
 bio-forge = "0.1.0"
 ```
 
-### Example: Preparing a PDB Structure
+#### Example: Preparing a PDB Structure
 
 ```rust
 use std::{fs::File, io::{BufReader, BufWriter}};
