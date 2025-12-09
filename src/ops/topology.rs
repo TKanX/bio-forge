@@ -447,6 +447,7 @@ mod tests {
         types::{Element, Point, ResidueCategory, ResiduePosition},
     };
     use nalgebra::Vector3;
+    use std::collections::HashSet;
 
     fn structure_from_residues(residues: Vec<Residue>) -> Structure {
         let mut chain = Chain::new("A");
@@ -665,5 +666,39 @@ mod tests {
         let sg2_idx = global_atom_index(&topology, "A", 2, "SG");
 
         assert!(has_bond(&topology, sg1_idx, sg2_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_avoids_duplicate_bonds_for_standard_residue() {
+        let residue = standard_residue("ALA", 1, ResiduePosition::Internal);
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let mut seen = HashSet::new();
+        for bond in topology.bonds() {
+            let key = (bond.a1_idx, bond.a2_idx, bond.order);
+            assert!(seen.insert(key), "duplicate bond detected: {key:?}");
+        }
+    }
+
+    #[test]
+    fn build_sets_expected_water_degree() {
+        let residue = standard_residue("HOH", 1, ResiduePosition::Internal);
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let o_idx = global_atom_index(&topology, "A", 1, "O");
+        let neighbors: Vec<_> = topology.neighbors_of(o_idx).collect();
+
+        assert_eq!(neighbors.len(), 2, "water oxygen should have two neighbors");
+
+        let mut uniq = HashSet::new();
+        for idx in neighbors {
+            assert!(uniq.insert(idx), "neighbor duplicated for water oxygen");
+        }
     }
 }
