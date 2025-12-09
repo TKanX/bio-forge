@@ -14,7 +14,7 @@ use crate::model::{
     types::{BondOrder, ResidueCategory, ResiduePosition},
 };
 use crate::ops::error::Error;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Builder responsible for creating [`Topology`] objects from a [`Structure`].
 ///
@@ -81,13 +81,13 @@ impl TopologyBuilder {
     ///
     /// Returns [`Error`] when a required template or atom is missing.
     pub fn build(self, structure: Structure) -> Result<Topology, Error> {
-        let mut bonds = Vec::new();
+        let mut collector = BondCollector::new();
 
-        self.build_intra_residue(&structure, &mut bonds)?;
+        self.build_intra_residue(&structure, &mut collector)?;
 
-        self.build_inter_residue(&structure, &mut bonds)?;
+        self.build_inter_residue(&structure, &mut collector)?;
 
-        Ok(Topology::new(structure, bonds))
+        Ok(Topology::new(structure, collector.into_bonds()))
     }
 
     /// Populates bonds that lie within each residue using templates and
@@ -95,7 +95,7 @@ impl TopologyBuilder {
     fn build_intra_residue(
         &self,
         structure: &Structure,
-        bonds: &mut Vec<Bond>,
+        collector: &mut BondCollector,
     ) -> Result<(), Error> {
         let mut global_atom_offset = 0;
 
@@ -123,27 +123,11 @@ impl TopologyBuilder {
                             a1_name,
                             a2_name,
                             order,
-                            bonds,
+                            collector,
                         )?;
                     }
 
-                    for (h_name, _, anchors) in tmpl_view.hydrogens() {
-                        match anchors.into_iter().next() {
-                            Some(anchor) if residue.has_atom(h_name) => {
-                                self.try_add_bond(
-                                    residue,
-                                    global_atom_offset,
-                                    h_name,
-                                    anchor,
-                                    BondOrder::Single,
-                                    bonds,
-                                )?;
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    self.handle_terminal_intra_bonds(residue, global_atom_offset, bonds)?;
+                    self.handle_terminal_intra_bonds(residue, global_atom_offset, collector)?;
                 } else if residue.category == ResidueCategory::Hetero {
                     let tmpl = self.hetero_templates.get(&residue.name).ok_or_else(|| {
                         Error::MissingHeteroTemplate {
@@ -158,7 +142,7 @@ impl TopologyBuilder {
                             a1_name,
                             a2_name,
                             *order,
-                            bonds,
+                            collector,
                         )?;
                     }
                 }
@@ -178,14 +162,14 @@ impl TopologyBuilder {
         name1: &str,
         name2: &str,
         order: BondOrder,
-        bonds: &mut Vec<Bond>,
+        collector: &mut BondCollector,
     ) -> Result<(), Error> {
         let idx1 = residue.iter_atoms().position(|a| a.name == name1);
         let idx2 = residue.iter_atoms().position(|a| a.name == name2);
 
         match (idx1, idx2) {
             (Some(i1), Some(i2)) => {
-                bonds.push(Bond::new(offset + i1, offset + i2, order));
+                collector.insert(offset + i1, offset + i2, order);
                 Ok(())
             }
             (None, _) if self.is_optional_terminal_atom(residue, name1) => Ok(()),
@@ -227,7 +211,7 @@ impl TopologyBuilder {
         &self,
         residue: &crate::model::residue::Residue,
         offset: usize,
-        bonds: &mut Vec<Bond>,
+        collector: &mut BondCollector,
     ) -> Result<(), Error> {
         if residue.position == ResiduePosition::NTerminal
             && residue.standard_name.is_some_and(|s| s.is_protein())
@@ -237,7 +221,7 @@ impl TopologyBuilder {
                     residue.iter_atoms().position(|a| a.name == h_name),
                     residue.iter_atoms().position(|a| a.name == "N"),
                 ) {
-                    bonds.push(Bond::new(offset + h_idx, offset + n_idx, BondOrder::Single));
+                    collector.insert(offset + h_idx, offset + n_idx, BondOrder::Single);
                 }
             }
         }
@@ -249,19 +233,11 @@ impl TopologyBuilder {
             let oxt_idx = residue.iter_atoms().position(|a| a.name == "OXT");
 
             if let (Some(c_idx), Some(oxt_idx)) = (c_idx, oxt_idx) {
-                bonds.push(Bond::new(
-                    offset + c_idx,
-                    offset + oxt_idx,
-                    BondOrder::Single,
-                ));
+                collector.insert(offset + c_idx, offset + oxt_idx, BondOrder::Single);
 
                 for h_name in ["HXT", "HOXT"] {
                     if let Some(h_idx) = residue.iter_atoms().position(|a| a.name == h_name) {
-                        bonds.push(Bond::new(
-                            offset + oxt_idx,
-                            offset + h_idx,
-                            BondOrder::Single,
-                        ));
+                        collector.insert(offset + oxt_idx, offset + h_idx, BondOrder::Single);
                     }
                 }
             }
@@ -274,7 +250,7 @@ impl TopologyBuilder {
             let o5_idx = residue.iter_atoms().position(|a| a.name == "O5'");
 
             if let (Some(h_idx), Some(o_idx)) = (ho5_idx, o5_idx) {
-                bonds.push(Bond::new(offset + h_idx, offset + o_idx, BondOrder::Single));
+                collector.insert(offset + h_idx, offset + o_idx, BondOrder::Single);
             }
         }
 
@@ -285,7 +261,7 @@ impl TopologyBuilder {
             let o3_idx = residue.iter_atoms().position(|a| a.name == "O3'");
 
             if let (Some(h_idx), Some(o_idx)) = (ho3_idx, o3_idx) {
-                bonds.push(Bond::new(offset + h_idx, offset + o_idx, BondOrder::Single));
+                collector.insert(offset + h_idx, offset + o_idx, BondOrder::Single);
             }
         }
 
@@ -297,7 +273,7 @@ impl TopologyBuilder {
     fn build_inter_residue(
         &self,
         structure: &Structure,
-        bonds: &mut Vec<Bond>,
+        collector: &mut BondCollector,
     ) -> Result<(), Error> {
         let mut residue_offsets: Vec<Vec<usize>> = Vec::new();
         let mut current_offset = 0;
@@ -337,7 +313,7 @@ impl TopologyBuilder {
                             AtomLocator::new(next, next_offset, "N"),
                             self.peptide_bond_cutoff,
                             BondOrder::Single,
-                            bonds,
+                            collector,
                         );
                     } else if std1.is_nucleic() && std2.is_nucleic() {
                         self.connect_atoms_if_close(
@@ -345,7 +321,7 @@ impl TopologyBuilder {
                             AtomLocator::new(next, next_offset, "P"),
                             self.nucleic_bond_cutoff,
                             BondOrder::Single,
-                            bonds,
+                            collector,
                         );
                     }
                 }
@@ -376,7 +352,7 @@ impl TopologyBuilder {
                 let (idx2, pos2) = sulfur_atoms[j];
 
                 if nalgebra::distance_squared(&pos1, &pos2) <= cutoff_sq {
-                    bonds.push(Bond::new(idx1, idx2, BondOrder::Single));
+                    collector.insert(idx1, idx2, BondOrder::Single);
                 }
             }
         }
@@ -391,7 +367,7 @@ impl TopologyBuilder {
         second: AtomLocator<'_>,
         cutoff: f64,
         order: BondOrder,
-        bonds: &mut Vec<Bond>,
+        collector: &mut BondCollector,
     ) {
         if let (Some(idx1), Some(idx2)) = (
             first
@@ -407,9 +383,37 @@ impl TopologyBuilder {
             let p2 = second.residue.atoms()[idx2].pos;
 
             if nalgebra::distance_squared(&p1, &p2) <= cutoff * cutoff {
-                bonds.push(Bond::new(first.offset + idx1, second.offset + idx2, order));
+                collector.insert(first.offset + idx1, second.offset + idx2, order);
             }
         }
+    }
+}
+
+/// Collects bonds while enforcing uniqueness across all assembly phases.
+struct BondCollector {
+    bonds: Vec<Bond>,
+    seen: HashSet<(usize, usize, BondOrder)>,
+}
+
+impl BondCollector {
+    fn new() -> Self {
+        Self {
+            bonds: Vec::new(),
+            seen: HashSet::new(),
+        }
+    }
+
+    fn insert(&mut self, idx1: usize, idx2: usize, order: BondOrder) {
+        let bond = Bond::new(idx1, idx2, order);
+        let key = (bond.a1_idx, bond.a2_idx, bond.order);
+
+        if self.seen.insert(key) {
+            self.bonds.push(bond);
+        }
+    }
+
+    fn into_bonds(self) -> Vec<Bond> {
+        self.bonds
     }
 }
 
@@ -443,6 +447,7 @@ mod tests {
         types::{Element, Point, ResidueCategory, ResiduePosition},
     };
     use nalgebra::Vector3;
+    use std::collections::HashSet;
 
     fn structure_from_residues(residues: Vec<Residue>) -> Structure {
         let mut chain = Chain::new("A");
@@ -661,5 +666,39 @@ mod tests {
         let sg2_idx = global_atom_index(&topology, "A", 2, "SG");
 
         assert!(has_bond(&topology, sg1_idx, sg2_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_avoids_duplicate_bonds_for_standard_residue() {
+        let residue = standard_residue("ALA", 1, ResiduePosition::Internal);
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let mut seen = HashSet::new();
+        for bond in topology.bonds() {
+            let key = (bond.a1_idx, bond.a2_idx, bond.order);
+            assert!(seen.insert(key), "duplicate bond detected: {key:?}");
+        }
+    }
+
+    #[test]
+    fn build_sets_expected_water_degree() {
+        let residue = standard_residue("HOH", 1, ResiduePosition::Internal);
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let o_idx = global_atom_index(&topology, "A", 1, "O");
+        let neighbors: Vec<_> = topology.neighbors_of(o_idx).collect();
+
+        assert_eq!(neighbors.len(), 2, "water oxygen should have two neighbors");
+
+        let mut uniq = HashSet::new();
+        for idx in neighbors {
+            assert!(uniq.insert(idx), "neighbor duplicated for water oxygen");
+        }
     }
 }
