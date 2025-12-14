@@ -199,7 +199,16 @@ impl TopologyBuilder {
         match residue.position {
             ResiduePosition::NTerminal if is_protein => atom_name == "H",
             ResiduePosition::CTerminal if is_protein => matches!(atom_name, "HXT" | "HOXT"),
-            ResiduePosition::FivePrime if is_nucleic => atom_name == "HO5'",
+            ResiduePosition::FivePrime if is_nucleic => {
+                if residue.has_atom("P") {
+                    matches!(atom_name, "OP3" | "HOP3" | "HOP2")
+                } else {
+                    matches!(
+                        atom_name,
+                        "P" | "OP1" | "OP2" | "OP3" | "HOP3" | "HOP2" | "HO5'"
+                    )
+                }
+            }
             ResiduePosition::ThreePrime if is_nucleic => atom_name == "HO3'",
             _ => false,
         }
@@ -246,11 +255,22 @@ impl TopologyBuilder {
         if residue.position == ResiduePosition::FivePrime
             && residue.standard_name.is_some_and(|s| s.is_nucleic())
         {
-            let ho5_idx = residue.iter_atoms().position(|a| a.name == "HO5'");
-            let o5_idx = residue.iter_atoms().position(|a| a.name == "O5'");
+            if let (Some(p_idx), Some(op3_idx)) = (
+                residue.iter_atoms().position(|a| a.name == "P"),
+                residue.iter_atoms().position(|a| a.name == "OP3"),
+            ) {
+                collector.insert(offset + p_idx, offset + op3_idx, BondOrder::Single);
 
-            if let (Some(h_idx), Some(o_idx)) = (ho5_idx, o5_idx) {
-                collector.insert(offset + h_idx, offset + o_idx, BondOrder::Single);
+                if let Some(hop3_idx) = residue.iter_atoms().position(|a| a.name == "HOP3") {
+                    collector.insert(offset + op3_idx, offset + hop3_idx, BondOrder::Single);
+                }
+            }
+
+            if let (Some(ho5_idx), Some(o5_idx)) = (
+                residue.iter_atoms().position(|a| a.name == "HO5'"),
+                residue.iter_atoms().position(|a| a.name == "O5'"),
+            ) {
+                collector.insert(offset + ho5_idx, offset + o5_idx, BondOrder::Single);
             }
         }
 
@@ -526,6 +546,49 @@ mod tests {
             .any(|bond| bond.a1_idx == a1 && bond.a2_idx == a2 && bond.order == order)
     }
 
+    fn five_prime_residue_with_phosphate_and_op3(id: i32) -> Residue {
+        let mut residue = standard_residue("DA", id, ResiduePosition::FivePrime);
+        let p_pos = residue.atom("P").unwrap().pos;
+        let op1_pos = residue.atom("OP1").unwrap().pos;
+        let op2_pos = residue.atom("OP2").unwrap().pos;
+        let o5_pos = residue.atom("O5'").unwrap().pos;
+        let centroid = (op1_pos.coords + op2_pos.coords + o5_pos.coords) / 3.0;
+        let direction = (p_pos.coords - centroid).normalize();
+        let op3_pos = p_pos + direction * 1.48;
+        residue.add_atom(Atom::new("OP3", Element::O, op3_pos));
+        residue
+    }
+
+    fn five_prime_residue_without_phosphate(id: i32) -> Residue {
+        let template = db::get_template("DA").unwrap();
+        let mut residue = Residue::new(
+            id,
+            None,
+            "DA",
+            Some(template.standard_name()),
+            ResidueCategory::Standard,
+        );
+        residue.position = ResiduePosition::FivePrime;
+
+        for (atom_name, element, point) in template.heavy_atoms() {
+            if !matches!(atom_name, "P" | "OP1" | "OP2") {
+                residue.add_atom(Atom::new(atom_name, element, point));
+            }
+        }
+
+        for (atom_name, point, _) in template.hydrogens() {
+            residue.add_atom(Atom::new(atom_name, Element::H, point));
+        }
+
+        let o5_pos = residue.atom("O5'").unwrap().pos;
+        let c5_pos = residue.atom("C5'").unwrap().pos;
+        let h_dir = (o5_pos - c5_pos).normalize();
+        let ho5_pos = o5_pos + h_dir * 0.96;
+        residue.add_atom(Atom::new("HO5'", Element::H, ho5_pos));
+
+        residue
+    }
+
     #[test]
     fn build_creates_peptide_bond_between_adjacent_proteins() {
         let residue1 = standard_residue("GLY", 1, ResiduePosition::NTerminal);
@@ -700,5 +763,71 @@ mod tests {
         for idx in neighbors {
             assert!(uniq.insert(idx), "neighbor duplicated for water oxygen");
         }
+    }
+
+    #[test]
+    fn build_creates_p_op3_bond_for_5prime_phosphate() {
+        let residue = five_prime_residue_with_phosphate_and_op3(1);
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let p_idx = global_atom_index(&topology, "A", 1, "P");
+        let op3_idx = global_atom_index(&topology, "A", 1, "OP3");
+
+        assert!(has_bond(&topology, p_idx, op3_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_creates_op3_hop3_bond_when_protonated() {
+        let mut residue = five_prime_residue_with_phosphate_and_op3(1);
+        let op3_pos = residue.atom("OP3").unwrap().pos;
+        let p_pos = residue.atom("P").unwrap().pos;
+        let h_dir = (op3_pos - p_pos).normalize();
+        let hop3_pos = op3_pos + h_dir * 0.96;
+        residue.add_atom(Atom::new("HOP3", Element::H, hop3_pos));
+
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let op3_idx = global_atom_index(&topology, "A", 1, "OP3");
+        let hop3_idx = global_atom_index(&topology, "A", 1, "HOP3");
+
+        assert!(has_bond(&topology, op3_idx, hop3_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn build_creates_o5_ho5_bond_for_5prime_hydroxyl() {
+        let residue = five_prime_residue_without_phosphate(1);
+        let structure = structure_from_residues(vec![residue]);
+        let topology = TopologyBuilder::new()
+            .build(structure)
+            .expect("build topology");
+
+        let o5_idx = global_atom_index(&topology, "A", 1, "O5'");
+        let ho5_idx = global_atom_index(&topology, "A", 1, "HO5'");
+
+        assert!(has_bond(&topology, o5_idx, ho5_idx, BondOrder::Single));
+    }
+
+    #[test]
+    fn optional_terminal_atoms_includes_nucleic_5prime_special_atoms() {
+        let residue_with_p = five_prime_residue_with_phosphate_and_op3(1);
+        let builder = TopologyBuilder::new();
+
+        assert!(builder.is_optional_terminal_atom(&residue_with_p, "OP3"));
+        assert!(builder.is_optional_terminal_atom(&residue_with_p, "HOP3"));
+        assert!(builder.is_optional_terminal_atom(&residue_with_p, "HOP2"));
+        assert!(!builder.is_optional_terminal_atom(&residue_with_p, "P"));
+        assert!(!builder.is_optional_terminal_atom(&residue_with_p, "OP1"));
+
+        let residue_no_p = five_prime_residue_without_phosphate(2);
+        assert!(builder.is_optional_terminal_atom(&residue_no_p, "P"));
+        assert!(builder.is_optional_terminal_atom(&residue_no_p, "OP1"));
+        assert!(builder.is_optional_terminal_atom(&residue_no_p, "OP2"));
+        assert!(builder.is_optional_terminal_atom(&residue_no_p, "HO5'"));
     }
 }

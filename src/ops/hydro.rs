@@ -22,6 +22,8 @@ const DISULFIDE_SG_THRESHOLD: f64 = 2.2;
 const N_TERM_PKA: f64 = 8.0;
 /// Henderson–Hasselbalch breakpoint for protonated C-termini.
 const C_TERM_PKA: f64 = 3.1;
+/// Henderson–Hasselbalch breakpoint for the second dissociation of terminal phosphate.
+const PHOSPHATE_PKA2: f64 = 6.5;
 
 /// Parameters controlling hydrogen addition behavior.
 ///
@@ -370,7 +372,9 @@ fn construct_hydrogens_for_residue(
             construct_3_prime_hydrogen(residue)?;
         }
         ResiduePosition::FivePrime if residue.standard_name.is_some_and(|s| s.is_nucleic()) => {
-            if !residue.has_atom("P") && residue.has_atom("O5'") {
+            if residue.has_atom("P") {
+                construct_5_prime_phosphate_hydrogens(residue, config)?;
+            } else if residue.has_atom("O5'") {
                 construct_5_prime_hydrogen(residue)?;
             }
         }
@@ -654,6 +658,56 @@ fn construct_5_prime_hydrogen(residue: &mut Residue) -> Result<(), Error> {
     Ok(())
 }
 
+/// Adds hydrogens to 5'-terminal phosphate groups based on pH.
+///
+/// At physiological pH (≥6.5), the terminal phosphate carries two negative charges and
+/// requires no protons. Below this threshold, one proton is added to OP3. The function
+/// respects existing hydrogens when `remove_existing_h` is disabled.
+///
+/// # Arguments
+///
+/// * `residue` - Nucleic acid residue with a 5'-terminal phosphate.
+/// * `config` - Hydrogenation configuration containing pH settings.
+///
+/// # Returns
+///
+/// `Ok(())` when hydrogens are appropriately placed or removed.
+///
+/// # Errors
+///
+/// Returns [`Error::IncompleteResidueForHydro`] if phosphate atoms are missing.
+fn construct_5_prime_phosphate_hydrogens(
+    residue: &mut Residue,
+    config: &HydroConfig,
+) -> Result<(), Error> {
+    let ph = config.target_ph.unwrap_or(7.4);
+
+    if ph >= PHOSPHATE_PKA2 {
+        residue.remove_atom("HOP3");
+        residue.remove_atom("HOP2");
+        return Ok(());
+    }
+
+    if residue.has_atom("HOP3") {
+        return Ok(());
+    }
+
+    let op3 = residue
+        .atom("OP3")
+        .ok_or_else(|| Error::incomplete_for_hydro(&residue.name, residue.id, "OP3"))?
+        .pos;
+    let p = residue
+        .atom("P")
+        .ok_or_else(|| Error::incomplete_for_hydro(&residue.name, residue.id, "P"))?
+        .pos;
+
+    let direction = (op3 - p).normalize();
+    let h_pos = op3 + direction * 0.96;
+
+    residue.add_atom(Atom::new("HOP3", Element::H, h_pos));
+    Ok(())
+}
+
 /// Computes the optimal rigid transform mapping template anchor points to residue atoms.
 ///
 /// Uses Kabsch alignment with safeguards for one- and two-point configurations.
@@ -761,6 +815,64 @@ mod tests {
         let offset = c_pos - o_pos;
         let oxt_pos = c_pos + offset;
         residue.add_atom(Atom::new("OXT", Element::O, oxt_pos));
+        residue
+    }
+
+    fn five_prime_residue_with_phosphate(id: i32) -> Residue {
+        let template = db::get_template("DA").unwrap();
+        let mut residue = Residue::new(
+            id,
+            None,
+            "DA",
+            Some(StandardResidue::DA),
+            ResidueCategory::Standard,
+        );
+        residue.position = ResiduePosition::FivePrime;
+        for (atom_name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(atom_name, element, pos));
+        }
+        let p_pos = residue.atom("P").unwrap().pos;
+        let op1_pos = residue.atom("OP1").unwrap().pos;
+        let op2_pos = residue.atom("OP2").unwrap().pos;
+        let o5_pos = residue.atom("O5'").unwrap().pos;
+        let centroid = (op1_pos.coords + op2_pos.coords + o5_pos.coords) / 3.0;
+        let direction = (p_pos.coords - centroid).normalize();
+        let op3_pos = p_pos + direction * 1.48;
+        residue.add_atom(Atom::new("OP3", Element::O, op3_pos));
+        residue
+    }
+
+    fn five_prime_residue_without_phosphate(id: i32) -> Residue {
+        let template = db::get_template("DA").unwrap();
+        let mut residue = Residue::new(
+            id,
+            None,
+            "DA",
+            Some(StandardResidue::DA),
+            ResidueCategory::Standard,
+        );
+        residue.position = ResiduePosition::FivePrime;
+        for (atom_name, element, pos) in template.heavy_atoms() {
+            if !matches!(atom_name, "P" | "OP1" | "OP2") {
+                residue.add_atom(Atom::new(atom_name, element, pos));
+            }
+        }
+        residue
+    }
+
+    fn three_prime_residue(id: i32) -> Residue {
+        let template = db::get_template("DA").unwrap();
+        let mut residue = Residue::new(
+            id,
+            None,
+            "DA",
+            Some(StandardResidue::DA),
+            ResidueCategory::Standard,
+        );
+        residue.position = ResiduePosition::ThreePrime;
+        for (atom_name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(atom_name, element, pos));
+        }
         residue
     }
 
@@ -972,5 +1084,67 @@ mod tests {
         assert_eq!(res2.name, "CYX");
         assert!(!res1.has_atom("HG"));
         assert!(!res2.has_atom("HG"));
+    }
+
+    #[test]
+    fn five_prime_phosphate_deprotonated_at_physiological_ph() {
+        let residue = five_prime_residue_with_phosphate(60);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 60, None).unwrap();
+        assert!(residue.has_atom("OP3"), "OP3 should remain");
+        assert!(
+            !residue.has_atom("HOP3"),
+            "HOP3 should not exist at neutral pH"
+        );
+        assert!(
+            !residue.has_atom("HOP2"),
+            "HOP2 should not exist at neutral pH"
+        );
+    }
+
+    #[test]
+    fn five_prime_phosphate_protonated_below_pka() {
+        let residue = five_prime_residue_with_phosphate(61);
+        let mut structure = structure_with_residue(residue);
+        let mut config = HydroConfig::default();
+        config.target_ph = Some(5.5);
+
+        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 61, None).unwrap();
+        assert!(residue.has_atom("OP3"), "OP3 should remain");
+        assert!(residue.has_atom("HOP3"), "HOP3 should be added below pKa");
+    }
+
+    #[test]
+    fn five_prime_without_phosphate_gets_ho5() {
+        let residue = five_prime_residue_without_phosphate(62);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 62, None).unwrap();
+        assert!(
+            residue.has_atom("HO5'"),
+            "HO5' should be added for 5'-OH terminus"
+        );
+        assert!(!residue.has_atom("P"), "phosphorus should not exist");
+    }
+
+    #[test]
+    fn three_prime_nucleic_gets_ho3() {
+        let residue = three_prime_residue(70);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+
+        let residue = structure.find_residue("A", 70, None).unwrap();
+        assert!(
+            residue.has_atom("HO3'"),
+            "HO3' should be added for 3' terminal"
+        );
     }
 }

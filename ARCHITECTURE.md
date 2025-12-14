@@ -78,7 +78,7 @@ flowchart TD
 - **FetchTemplate** – pulls `TemplateView` for each residue name, failing early if missing.
 - **AlignPairs** – pairs existing heavy atoms with template coordinates for alignment anchors.
 - **SVD** – computes rotation/translation via Kabsch/SVD, handling single/dual point fallbacks.
-- **SynthesizeAtoms** – recreates missing heavy atoms (and terminal OXT when needed) using transformed template positions.
+- **SynthesizeAtoms** – recreates missing heavy atoms (terminal OXT for peptides, OP3 for 5'-phosphorylated nucleic acids) using transformed template positions or tetrahedral geometry.
 - **Cleanup** – removes atoms not present in the template to ensure canonical composition.
 
 ### 3.3 Hydro Pipeline (`ops::hydro`)
@@ -98,7 +98,7 @@ flowchart TD
 - **Protonation** – applies pH-driven heuristics plus HIS strategy selection to decide residue names.
 - **StripOldH** – removes existing hydrogens if `remove_existing_h` is enabled.
 - **GeometryBuild** – reconstructs hydrogens using template anchors, calling `reconstruct_geometry` and `calculate_transform` internally.
-- **TerminalAdjust** – adds terminal hydrogens (N-term, C-term, nucleic 5'/3') respecting protonation states.
+- **TerminalAdjust** – adds terminal hydrogens (N-term H1/H2/H3, C-term HOXT, nucleic 5' HO5' or pH-dependent phosphate HOP3, nucleic 3' HO3') respecting protonation states.
 - **EndHydro** – structure now contains geometrically sound hydrogens.
 
 ### 3.4 Solvate Pipeline (`ops::solvate`)
@@ -136,7 +136,7 @@ flowchart TD
 - **PrepareOffsets** – computes atom-index offsets for every residue to map local indexes to global topology indexes.
 - **IntraStandard** – connects intra-residue bonds per template definitions, including hydrogen anchors.
 - **HeteroTemplates** – injects bonds for hetero residues via user-provided `Template`s or errors if absent.
-- **TerminalBonds** – adds special-case bonds for terminal atoms (H1/H2/H3, HOXT, HO5', HO3').
+- **TerminalBonds** – adds special-case bonds for terminal atoms (H1/H2/H3, HOXT for peptides; P–OP3, OP3–HOP3, O5'–HO5', O3'–HO3' for nucleic acids).
 - **InterResidue** – detects peptide and nucleic linkages by measuring atom distances against cutoffs.
 - **DisulfideScan** – adds bonds between cystine sulfurs within the disulfide cutoff.
 - **EmitTopology** – produces the final `Topology` pairing the structure with collected bonds.
@@ -179,7 +179,7 @@ flowchart TD
 - **Anchor selection** – each template hydrogen lists one or more anchor atoms; missing anchors trigger `IncompleteResidueForHydro` errors to avoid guesswork.
 - **Rigid transform** – `reconstruct_geometry` retrieves the residue-specific transform (rotation + translation) derived from current heavy atoms and applies it to the template hydrogen coordinate.
 - **Randomization** – none is applied for standard hydrogens, ensuring deterministic placement; terminals use evenly spaced tetrahedral vectors sorted by dot product to preserve orientation.
-- **Terminal logic** – N-termini place up to three hydrogens arranged around the N–CA axis, while C-termini and nucleic terminals enforce the specific HOXT/HO5'/HO3' connectivity.
+- **Terminal logic** – N-termini place up to three hydrogens arranged around the N–CA axis; C-termini add HOXT to OXT; nucleic 5'-terminals either add HO5' (no phosphate) or pH-dependent HOP3 (with phosphate, below pKₐ₂ ≈ 6.5); nucleic 3'-terminals always add HO3'.
 
 ### 4.3 Ion Replacement and Degradation Handling
 

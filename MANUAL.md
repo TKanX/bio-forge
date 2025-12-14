@@ -72,7 +72,7 @@ Options:
 bioforge repair -i cleaned.pdb -o repaired.pdb
 ```
 
-- Aligns each standard residue to its template and fills in missing heavy atoms, including peptide termini.
+- Aligns each standard residue to its template and fills in missing heavy atoms, including peptide termini (OXT) and nucleic acid 5'-terminal phosphate (OP3).
 - Ideal immediately after `clean` to ensure the structure is chemically complete before protonation.
 
 ### `hydro` – Add hydrogens with titration awareness

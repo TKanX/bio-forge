@@ -14,7 +14,7 @@
 
 1. **Load** – `io::read_pdb_structure` or `io::read_mmcif_structure` parses coordinates with help from `IoContext` alias resolution.
 2. **Clean** – `ops::clean_structure` removes waters, ions, hetero residues, or arbitrary residue names via `CleanConfig`.
-3. **Repair** – `ops::repair_structure` realigns residues to their templates and rebuilds missing heavy atoms (including OXT on C-termini).
+3. **Repair** – `ops::repair_structure` realigns residues to their templates and rebuilds missing heavy atoms (including OXT on C-termini and OP3 on 5'-phosphorylated nucleic acids).
 4. **Hydrogenate** – `ops::add_hydrogens` infers protonation states (configurable pH and histidine strategy) and reconstructs hydrogens from template anchors.
 5. **Solvate/Ionize** – `ops::solvate_structure` creates a periodic box, packs water on a configurable lattice, and swaps molecules for ions to satisfy a target charge.
 6. **Topology** – `ops::TopologyBuilder` replays template bond definitions, peptide-link detection, nucleic backbone connectivity, and disulfide heuristics to emit a `Topology` object.
@@ -44,7 +44,7 @@ BioForge is also available as a library crate. Add it to your `Cargo.toml` depen
 
 ```toml
 [dependencies]
-bio-forge = "0.2.1"
+bio-forge = "0.2.2"
 ```
 
 #### Example: Preparing a PDB Structure
