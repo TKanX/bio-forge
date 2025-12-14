@@ -22,6 +22,8 @@ const DISULFIDE_SG_THRESHOLD: f64 = 2.2;
 const N_TERM_PKA: f64 = 8.0;
 /// Henderson–Hasselbalch breakpoint for protonated C-termini.
 const C_TERM_PKA: f64 = 3.1;
+/// Henderson–Hasselbalch breakpoint for the second dissociation of terminal phosphate.
+const PHOSPHATE_PKA2: f64 = 6.5;
 
 /// Parameters controlling hydrogen addition behavior.
 ///
@@ -370,7 +372,9 @@ fn construct_hydrogens_for_residue(
             construct_3_prime_hydrogen(residue)?;
         }
         ResiduePosition::FivePrime if residue.standard_name.is_some_and(|s| s.is_nucleic()) => {
-            if !residue.has_atom("P") && residue.has_atom("O5'") {
+            if residue.has_atom("P") {
+                construct_5_prime_phosphate_hydrogens(residue, config)?;
+            } else if residue.has_atom("O5'") {
                 construct_5_prime_hydrogen(residue)?;
             }
         }
@@ -651,6 +655,56 @@ fn construct_5_prime_hydrogen(residue: &mut Residue) -> Result<(), Error> {
     let h_pos = o5 + h_dir.scale(0.96);
 
     residue.add_atom(Atom::new("HO5'", Element::H, h_pos));
+    Ok(())
+}
+
+/// Adds hydrogens to 5'-terminal phosphate groups based on pH.
+///
+/// At physiological pH (≥6.5), the terminal phosphate carries two negative charges and
+/// requires no protons. Below this threshold, one proton is added to OP3. The function
+/// respects existing hydrogens when `remove_existing_h` is disabled.
+///
+/// # Arguments
+///
+/// * `residue` - Nucleic acid residue with a 5'-terminal phosphate.
+/// * `config` - Hydrogenation configuration containing pH settings.
+///
+/// # Returns
+///
+/// `Ok(())` when hydrogens are appropriately placed or removed.
+///
+/// # Errors
+///
+/// Returns [`Error::IncompleteResidueForHydro`] if phosphate atoms are missing.
+fn construct_5_prime_phosphate_hydrogens(
+    residue: &mut Residue,
+    config: &HydroConfig,
+) -> Result<(), Error> {
+    let ph = config.target_ph.unwrap_or(7.4);
+
+    if ph >= PHOSPHATE_PKA2 {
+        residue.remove_atom("HOP3");
+        residue.remove_atom("HOP2");
+        return Ok(());
+    }
+
+    if residue.has_atom("HOP3") {
+        return Ok(());
+    }
+
+    let op3 = residue
+        .atom("OP3")
+        .ok_or_else(|| Error::incomplete_for_hydro(&residue.name, residue.id, "OP3"))?
+        .pos;
+    let p = residue
+        .atom("P")
+        .ok_or_else(|| Error::incomplete_for_hydro(&residue.name, residue.id, "P"))?
+        .pos;
+
+    let direction = (op3 - p).normalize();
+    let h_pos = op3 + direction * 0.96;
+
+    residue.add_atom(Atom::new("HOP3", Element::H, h_pos));
     Ok(())
 }
 
