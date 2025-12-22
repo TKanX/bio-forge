@@ -1,3 +1,8 @@
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/TKanX/bio-forge/main/assets/logo.svg",
+    html_favicon_url = "https://raw.githubusercontent.com/TKanX/bio-forge/main/assets/logo.svg"
+)]
+
 //! # BioForge
 //!
 //! **BioForge** is a pure-Rust molecular preparation engine that ingests experimental macromolecular files, reconciles them with curated residue templates, and emits topology-aware structures ready for simulation or analysis. The crate favors deterministic workflows, strong typing, and clean error surfaces so pipelines remain auditable from parsing to solvation.
