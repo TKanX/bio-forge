@@ -6,6 +6,7 @@
 //! structure.
 
 use super::residue::Residue;
+use smol_str::SmolStr;
 use std::fmt;
 
 /// Polymer chain containing an ordered list of residues.
@@ -16,7 +17,7 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chain {
     /// Chain identifier matching the source structure (usually a single character).
-    pub id: String,
+    pub id: SmolStr,
     /// Internal storage preserving insertion order for residues.
     residues: Vec<Residue>,
 }
@@ -36,7 +37,7 @@ impl Chain {
     /// A new `Chain` with no residues.
     pub fn new(id: &str) -> Self {
         Self {
-            id: id.to_string(),
+            id: SmolStr::new(id),
             residues: Vec::new(),
         }
     }
