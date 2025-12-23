@@ -929,7 +929,7 @@ mod tests {
     #[test]
     fn determine_protonation_state_respects_his_strategy() {
         let mut residue = residue_from_template("HID", StandardResidue::HIS, 3);
-        residue.name = "HIS".to_string();
+        residue.name = "HIS".into();
         let structure = structure_with_residue(residue);
 
         let config = HydroConfig {
@@ -1006,7 +1006,7 @@ mod tests {
     #[test]
     fn determine_protonation_state_skips_already_marked_cyx() {
         let mut residue = residue_from_template("CYS", StandardResidue::CYS, 25);
-        residue.name = "CYX".to_string();
+        residue.name = "CYX".into();
         let structure = structure_with_residue(residue);
         let mut config = HydroConfig::default();
         config.target_ph = Some(9.0);
