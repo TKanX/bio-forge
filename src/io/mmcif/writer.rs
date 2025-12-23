@@ -31,6 +31,8 @@ pub fn write_structure<W: Write>(writer: W, structure: &Structure) -> Result<(),
 
     ctx.write_cell(structure.box_vectors)?;
 
+    ctx.write_entity_poly_seq(structure)?;
+
     ctx.write_atoms(structure)?;
 
     Ok(())
@@ -56,6 +58,8 @@ pub fn write_topology<W: Write>(writer: W, topology: &Topology) -> Result<(), Er
     ctx.write_header()?;
 
     ctx.write_cell(structure.box_vectors)?;
+
+    ctx.write_entity_poly_seq(structure)?;
 
     ctx.write_atoms(structure)?;
 
@@ -136,6 +140,58 @@ impl<W: Write> WriterContext<W> {
         Ok(())
     }
 
+    /// Writes the `_entity_poly_seq` loop for polymer chains.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Structure whose polymer residues will be serialized.
+    fn write_entity_poly_seq(&mut self, structure: &Structure) -> Result<(), Error> {
+        let mut buffer = Vec::new();
+        let mut next_entity_id = 1usize;
+        let mut entity_ids: HashMap<smol_str::SmolStr, usize> = HashMap::new();
+
+        for chain in structure.iter_chains() {
+            let chain_id = chain.id.clone();
+            let entity_id = *entity_ids.entry(chain_id).or_insert_with(|| {
+                let val = next_entity_id;
+                next_entity_id += 1;
+                val
+            });
+
+            let polymer_residues: Vec<_> = chain
+                .iter_residues()
+                .filter(|r| {
+                    r.standard_name
+                        .is_some_and(|s| s.is_protein() || s.is_nucleic())
+                })
+                .collect();
+
+            if !polymer_residues.is_empty() {
+                for (i, residue) in polymer_residues.iter().enumerate() {
+                    writeln!(buffer, "{} {} {} n", entity_id, i + 1, residue.name)
+                        .map_err(|e| Error::from_io(e, None))?;
+                }
+            }
+        }
+
+        if !buffer.is_empty() {
+            writeln!(self.writer, "loop_").map_err(|e| Error::from_io(e, None))?;
+            writeln!(self.writer, "_entity_poly_seq.entity_id")
+                .map_err(|e| Error::from_io(e, None))?;
+            writeln!(self.writer, "_entity_poly_seq.num").map_err(|e| Error::from_io(e, None))?;
+            writeln!(self.writer, "_entity_poly_seq.mon_id")
+                .map_err(|e| Error::from_io(e, None))?;
+            writeln!(self.writer, "_entity_poly_seq.hetero")
+                .map_err(|e| Error::from_io(e, None))?;
+            self.writer
+                .write_all(&buffer)
+                .map_err(|e| Error::from_io(e, None))?;
+            writeln!(self.writer, "#").map_err(|e| Error::from_io(e, None))?;
+        }
+
+        Ok(())
+    }
+
     /// Writes the `_atom_site` loop and assigns mmCIF atom IDs.
     ///
     /// # Arguments
@@ -177,17 +233,32 @@ impl<W: Write> WriterContext<W> {
                 val
             });
 
+            let mut polymer_seq_id = 0;
+
             for residue in chain.iter_residues() {
+                let is_polymer = residue
+                    .standard_name
+                    .is_some_and(|s| s.is_protein() || s.is_nucleic());
+                let label_seq_id = if is_polymer {
+                    polymer_seq_id += 1;
+                    polymer_seq_id.to_string()
+                } else {
+                    ".".to_string()
+                };
+
                 for atom in residue.iter_atoms() {
-                    let group_pdb = match residue.standard_name {
-                        Some(std) if std.is_protein() || std.is_nucleic() => "ATOM",
-                        _ => "HETATM",
-                    };
+                    let group_pdb = if is_polymer { "ATOM" } else { "HETATM" };
 
                     let atom_id = self.current_atom_id;
 
                     self.write_atom_record(
-                        group_pdb, atom_id, atom, residue, &chain_id, entity_id,
+                        group_pdb,
+                        atom_id,
+                        atom,
+                        residue,
+                        &chain_id,
+                        entity_id,
+                        &label_seq_id,
                     )?;
 
                     self.atom_index_to_id.insert(global_atom_index, atom_id);
@@ -210,6 +281,7 @@ impl<W: Write> WriterContext<W> {
     /// * `residue` - Residue metadata for labels and auth fields.
     /// * `chain_id` - Parent chain identifier string.
     /// * `entity_id` - Numeric entity identifier assigned to the chain.
+    /// * `label_seq_id` - Sequential residue index for polymers, or `.` for others.
     fn write_atom_record(
         &mut self,
         group_pdb: &str,
@@ -218,12 +290,12 @@ impl<W: Write> WriterContext<W> {
         residue: &Residue,
         chain_id: &str,
         entity_id: usize,
+        label_seq_id: &str,
     ) -> Result<(), Error> {
         let type_symbol = atom.element.symbol();
         let label_atom_id = quote_string(&atom.name);
         let label_comp_id = quote_string(&residue.name);
         let label_asym_id = quote_string(chain_id);
-        let label_seq_id = residue.id.to_string();
         let ins_code = residue
             .insertion_code
             .map(|c| c.to_string())
