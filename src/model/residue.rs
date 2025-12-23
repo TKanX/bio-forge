@@ -6,6 +6,7 @@
 
 use super::atom::Atom;
 use super::types::{ResidueCategory, ResiduePosition, StandardResidue};
+use smol_str::SmolStr;
 use std::fmt;
 
 /// A residue within a biomolecular structure.
@@ -21,7 +22,7 @@ pub struct Residue {
     /// Optional insertion code differentiating records that share the same `id`.
     pub insertion_code: Option<char>,
     /// Original residue name as encountered during parsing.
-    pub name: String,
+    pub name: SmolStr,
     /// Canonical residue assignment if the name maps to a standard alphabet entry.
     pub standard_name: Option<StandardResidue>,
     /// Category describing whether the residue is standard, heterogen, or ion.
@@ -59,7 +60,7 @@ impl Residue {
         Self {
             id,
             insertion_code,
-            name: name.to_string(),
+            name: SmolStr::new(name),
             standard_name,
             category,
             position: ResiduePosition::None,
