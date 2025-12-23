@@ -7,6 +7,7 @@
 use crate::db;
 use crate::model::{
     atom::Atom,
+    grid::Grid,
     residue::Residue,
     structure::Structure,
     types::{Element, Point, ResidueCategory, ResiduePosition, StandardResidue},
@@ -208,7 +209,7 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
                 matches!(residue.standard_name, Some(StandardResidue::CYS)),
                 residue.atom("SG"),
             ) {
-                cys_sulfurs.push((c_idx, r_idx, sg.pos));
+                cys_sulfurs.push((sg.pos, (c_idx, r_idx)));
             }
         }
     }
@@ -217,16 +218,16 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
         return;
     }
 
-    let threshold_sq = DISULFIDE_SG_THRESHOLD * DISULFIDE_SG_THRESHOLD;
+    let grid = Grid::new(cys_sulfurs.clone(), DISULFIDE_SG_THRESHOLD + 0.5);
     let mut disulfide_residues: HashSet<(usize, usize)> = HashSet::new();
-    for i in 0..cys_sulfurs.len() {
-        for j in (i + 1)..cys_sulfurs.len() {
-            let (ci, ri, pos_i) = &cys_sulfurs[i];
-            let (cj, rj, pos_j) = &cys_sulfurs[j];
-            if (*pos_i - *pos_j).norm_squared() <= threshold_sq {
-                disulfide_residues.insert((*ci, *ri));
-                disulfide_residues.insert((*cj, *rj));
+
+    for (pos, (c_idx, r_idx)) in &cys_sulfurs {
+        for &(neighbor_c, neighbor_r) in grid.neighbors(pos, DISULFIDE_SG_THRESHOLD).exact() {
+            if *c_idx == neighbor_c && *r_idx == neighbor_r {
+                continue;
             }
+            disulfide_residues.insert((*c_idx, *r_idx));
+            disulfide_residues.insert((neighbor_c, neighbor_r));
         }
     }
 
