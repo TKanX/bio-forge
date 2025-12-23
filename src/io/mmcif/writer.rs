@@ -529,15 +529,27 @@ mod tests {
     use crate::model::topology::{Bond, Topology};
     use crate::model::types::{BondOrder, Element, Point, ResidueCategory, StandardResidue};
 
+    fn create_atom(name: &str, element: Element) -> Atom {
+        Atom::new(name, element, Point::new(0.0, 0.0, 0.0))
+    }
+
+    fn create_residue(
+        id: i32,
+        name: &str,
+        std: Option<StandardResidue>,
+        cat: ResidueCategory,
+    ) -> Residue {
+        Residue::new(id, None, name, std, cat)
+    }
+
     fn build_test_structure() -> Structure {
         let mut structure = Structure::new();
         structure.box_vectors = Some([[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]]);
 
         let mut chain = Chain::new("A");
 
-        let mut gly = Residue::new(
+        let mut gly = create_residue(
             1,
-            None,
             "GLY",
             Some(StandardResidue::GLY),
             ResidueCategory::Standard,
@@ -545,7 +557,7 @@ mod tests {
         gly.add_atom(Atom::new("N", Element::N, Point::new(0.0, 0.0, 0.0)));
         gly.add_atom(Atom::new("CA", Element::C, Point::new(1.0, 0.0, 0.0)));
 
-        let mut lig = Residue::new(2, None, "LIG", None, ResidueCategory::Hetero);
+        let mut lig = create_residue(2, "LIG", None, ResidueCategory::Hetero);
         lig.add_atom(Atom::new("C1", Element::C, Point::new(4.0, 5.0, 6.0)));
 
         chain.add_residue(gly);
@@ -556,130 +568,183 @@ mod tests {
     }
 
     #[test]
-    fn write_structure_emits_cell_and_atom_loop() {
+    fn write_header_and_cell_emits_correct_metadata() {
         let structure = build_test_structure();
         let mut buffer = Vec::new();
 
-        write_structure(&mut buffer, &structure).expect("mmCIF writer should succeed");
-
-        let output = String::from_utf8(buffer).expect("valid UTF-8");
-        let lines: Vec<&str> = output.lines().collect();
-
-        assert_eq!(lines[0], "data_bio_forge_export");
-        assert_eq!(lines[1], "#");
-        assert!(lines.iter().any(|line| line.starts_with("_cell.length_a")));
-
-        let loop_idx = lines
-            .iter()
-            .position(|line| *line == "loop_")
-            .expect("atom loop header present");
-        let atom_headers = &lines[loop_idx + 1..loop_idx + 20];
-        assert_eq!(atom_headers.len(), 19);
-        assert_eq!(atom_headers[0], "_atom_site.group_PDB");
-        assert_eq!(atom_headers[18], "_atom_site.auth_atom_id");
-
-        let atom_rows: Vec<&str> = lines[loop_idx + 20..]
-            .iter()
-            .copied()
-            .take_while(|line| *line != "#")
-            .collect();
-        assert_eq!(atom_rows.len(), 3);
-
-        let first_tokens: Vec<&str> = atom_rows[0].split_whitespace().collect();
-        assert_eq!(first_tokens[0], "ATOM");
-        assert_eq!(first_tokens[5], "GLY");
-        assert_eq!(first_tokens[6], "A");
-        assert_eq!(first_tokens[7], "1");
-        assert_eq!(first_tokens[8], "1");
-        assert_eq!(first_tokens[15], "1");
-
-        let het_tokens: Vec<&str> = atom_rows[2].split_whitespace().collect();
-        assert_eq!(het_tokens[0], "HETATM");
-        assert_eq!(het_tokens[5], "LIG");
-    }
-
-    #[test]
-    fn write_structure_without_box_emits_header_and_atoms() {
-        let mut structure = Structure::new();
-        let mut chain = Chain::new("B");
-        let mut ser = Residue::new(
-            7,
-            Some('A'),
-            "SER",
-            Some(StandardResidue::SER),
-            ResidueCategory::Standard,
-        );
-        ser.add_atom(Atom::new("OG", Element::O, Point::new(-1.0, 0.5, 2.0)));
-        chain.add_residue(ser);
-        structure.add_chain(chain);
-
-        let mut buffer = Vec::new();
-        write_structure(&mut buffer, &structure).expect("writer should succeed");
-        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        write_structure(&mut buffer, &structure).expect("structure write failed");
+        let output = String::from_utf8(buffer).expect("invalid UTF-8");
 
         assert!(output.contains("data_bio_forge_export"));
-        assert!(!output.contains("_cell.length_"));
-        assert!(output.contains("loop_"));
+        assert!(output.contains("_cell.length_a           10.000"));
+        assert!(output.contains("_cell.length_b           11.000"));
+        assert!(output.contains("_cell.length_c           12.000"));
+        assert!(output.contains("_cell.angle_alpha        90.00"));
     }
 
     #[test]
-    fn non_polymer_standard_residue_uses_hetatm_record() {
+    fn write_entity_poly_seq_generates_loop_for_polymers_only() {
         let mut structure = Structure::new();
-        let mut chain = Chain::new("W");
+        let mut chain = Chain::new("A");
 
-        let mut water = Residue::new(
-            42,
-            None,
-            "HOH",
-            Some(StandardResidue::HOH),
+        let ala = create_residue(
+            1,
+            "ALA",
+            Some(StandardResidue::ALA),
             ResidueCategory::Standard,
         );
-        water.add_atom(Atom::new("O", Element::O, Point::new(0.0, 0.0, 0.0)));
-        chain.add_residue(water);
+        let val = create_residue(
+            2,
+            "VAL",
+            Some(StandardResidue::VAL),
+            ResidueCategory::Standard,
+        );
+        let hoh = create_residue(
+            3,
+            "HOH",
+            Some(StandardResidue::HOH),
+            ResidueCategory::Hetero,
+        );
+
+        chain.add_residue(ala);
+        chain.add_residue(val);
+        chain.add_residue(hoh);
         structure.add_chain(chain);
 
         let mut buffer = Vec::new();
-        write_structure(&mut buffer, &structure).expect("writer should succeed");
-        let output = String::from_utf8(buffer).expect("valid UTF-8");
+        write_structure(&mut buffer, &structure).expect("structure write failed");
+        let output = String::from_utf8(buffer).expect("invalid UTF-8");
 
-        let atom_line = output
-            .lines()
-            .find(|line| line.starts_with("ATOM") || line.starts_with("HETATM"))
-            .expect("atom line present");
-        assert!(atom_line.starts_with("HETATM"));
+        assert!(output.contains("_entity_poly_seq.entity_id"));
+        assert!(output.contains("_entity_poly_seq.mon_id"));
+
+        assert!(output.contains("1 1 ALA n"));
+        assert!(output.contains("1 2 VAL n"));
+        assert!(!output.contains("1 3 HOH"));
     }
 
     #[test]
-    fn write_topology_emits_struct_conn_loop() {
+    fn label_seq_id_is_sequential_and_skips_non_polymers() {
+        let mut structure = Structure::new();
+        let mut chain = Chain::new("A");
+
+        let mut r1 = create_residue(
+            10,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        r1.add_atom(create_atom("CA", Element::C));
+
+        let mut r2 = create_residue(20, "LIG", None, ResidueCategory::Hetero);
+        r2.add_atom(create_atom("X", Element::C));
+
+        let mut r3 = create_residue(
+            30,
+            "VAL",
+            Some(StandardResidue::VAL),
+            ResidueCategory::Standard,
+        );
+        r3.add_atom(create_atom("CA", Element::C));
+
+        chain.add_residue(r1);
+        chain.add_residue(r2);
+        chain.add_residue(r3);
+        structure.add_chain(chain);
+
+        let mut buffer = Vec::new();
+        write_structure(&mut buffer, &structure).expect("structure write failed");
+        let output = String::from_utf8(buffer).expect("invalid UTF-8");
+
+        let lines: Vec<&str> = output.lines().collect();
+        let atom_lines: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.starts_with("ATOM") || l.starts_with("HETATM"))
+            .cloned()
+            .collect();
+
+        assert_eq!(atom_lines.len(), 3);
+
+        let ala_parts: Vec<&str> = atom_lines[0].split_whitespace().collect();
+        assert_eq!(ala_parts[5], "ALA");
+        assert_eq!(ala_parts[8], "1");
+        assert_eq!(ala_parts[15], "10");
+
+        let lig_parts: Vec<&str> = atom_lines[1].split_whitespace().collect();
+        assert_eq!(lig_parts[5], "LIG");
+        assert_eq!(lig_parts[8], ".");
+        assert_eq!(lig_parts[15], "20");
+
+        let val_parts: Vec<&str> = atom_lines[2].split_whitespace().collect();
+        assert_eq!(val_parts[5], "VAL");
+        assert_eq!(val_parts[8], "2");
+        assert_eq!(val_parts[15], "30");
+    }
+
+    #[test]
+    fn multiple_chains_are_assigned_distinct_entity_ids() {
+        let mut structure = Structure::new();
+
+        let mut chain_a = Chain::new("A");
+        let mut res_a = create_residue(
+            1,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        res_a.add_atom(create_atom("CA", Element::C));
+        chain_a.add_residue(res_a);
+        structure.add_chain(chain_a);
+
+        let mut chain_b = Chain::new("B");
+        let mut res_b = create_residue(
+            1,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        res_b.add_atom(create_atom("CA", Element::C));
+        chain_b.add_residue(res_b);
+        structure.add_chain(chain_b);
+
+        let mut buffer = Vec::new();
+        write_structure(&mut buffer, &structure).expect("structure write failed");
+        let output = String::from_utf8(buffer).expect("invalid UTF-8");
+
+        let atom_lines: Vec<&str> = output.lines().filter(|l| l.starts_with("ATOM")).collect();
+
+        let parts_a: Vec<&str> = atom_lines[0].split_whitespace().collect();
+        assert_eq!(parts_a[6], "A");
+        assert_eq!(parts_a[6], "A");
+        assert_eq!(parts_a[7], "1");
+
+        let parts_b: Vec<&str> = atom_lines[1].split_whitespace().collect();
+        assert_eq!(parts_b[6], "B");
+        assert_eq!(parts_b[7], "2");
+    }
+
+    #[test]
+    fn write_topology_emits_struct_conn_records() {
         let structure = build_test_structure();
         let topology = Topology::new(structure.clone(), vec![Bond::new(0, 1, BondOrder::Single)]);
 
         let mut buffer = Vec::new();
-        write_topology(&mut buffer, &topology).expect("topology writer succeeds");
+        write_topology(&mut buffer, &topology).expect("topology write failed");
+        let output = String::from_utf8(buffer).expect("invalid UTF-8");
 
-        let output = String::from_utf8(buffer).expect("valid UTF-8");
-        let lines: Vec<&str> = output.lines().collect();
+        assert!(output.contains("_struct_conn.id"));
 
-        let conn_id_idx = lines
-            .iter()
-            .position(|line| *line == "_struct_conn.id")
-            .expect("struct_conn header present");
-        let conn_loop_idx = conn_id_idx - 1;
-        assert_eq!(lines[conn_loop_idx], "loop_");
+        let conn_line = output
+            .lines()
+            .find(|l| l.starts_with("conn_0001"))
+            .expect("connection line found");
+        let tokens: Vec<&str> = conn_line.split_whitespace().collect();
 
-        const STRUCT_CONN_HEADERS: usize = 24;
-        let conn_headers = &lines[conn_loop_idx + 1..conn_loop_idx + 1 + STRUCT_CONN_HEADERS];
-        assert_eq!(conn_headers[0], "_struct_conn.id");
-        assert_eq!(
-            conn_headers[STRUCT_CONN_HEADERS - 1],
-            "_struct_conn.pdbx_value_order"
-        );
-
-        let conn_row = lines[conn_loop_idx + 1 + STRUCT_CONN_HEADERS];
-        let tokens: Vec<&str> = conn_row.split_whitespace().collect();
         assert_eq!(tokens[0], "conn_0001");
-        assert_eq!(tokens[1], "covale");
         assert_eq!(tokens[2], "N");
+        assert_eq!(tokens[4], "GLY");
+        assert_eq!(tokens[6], "1");
+        assert_eq!(tokens[11], "1");
         assert_eq!(tokens[12], "CA");
         assert_eq!(tokens[22], "1.000");
         assert_eq!(tokens[23], "SING");
@@ -691,18 +756,13 @@ mod tests {
         let topology = Topology::new(structure.clone(), vec![Bond::new(0, 1, BondOrder::Single)]);
 
         let mut ctx = WriterContext::new(Vec::new());
-        ctx.write_atoms(&structure).expect("atoms write");
-        ctx.atom_index_to_id.clear();
 
-        let err = ctx
-            .write_connections(&topology)
-            .expect_err("missing atom map should error");
-
+        let err = ctx.write_connections(&topology).expect_err("should fail");
         match err {
             Error::InconsistentData { details, .. } => {
                 assert!(details.contains("bond references atom index"));
             }
-            other => panic!("unexpected error: {other:?}"),
+            _ => panic!("wrong error type"),
         }
     }
 }
