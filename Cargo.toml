@@ -26,7 +26,7 @@ toml = "0.9.8"
 anyhow = { version = "1.0", optional = true }
 clap = { version = "4.4", features = ["derive"], optional = true }
 prettytable-rs = { version = "0.10", optional = true }
-indicatif = { version = "0.17.11", optional = true }
+indicatif = { version = "0.18.3", optional = true }
 is-terminal = { version = "0.4.17", optional = true }
 
 [lib]
@@ -40,7 +40,13 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["anyhow", "clap", "prettytable-rs", "indicatif", "is-terminal"]
+cli = [
+    "dep:anyhow",
+    "dep:clap",
+    "dep:prettytable-rs",
+    "dep:indicatif",
+    "dep:is-terminal",
+]
 
 [profile.release]
 opt-level = 3
