@@ -5,6 +5,7 @@
 //! the central container consumed by IO readers, cleaning operations, and solvation tools.
 
 use super::chain::Chain;
+use super::grid::Grid;
 use super::residue::Residue;
 use super::types::Point;
 use std::fmt;
@@ -301,6 +302,30 @@ impl Structure {
         } else {
             Point::origin()
         }
+    }
+
+    /// Constructs a spatial grid indexing all atoms in the structure.
+    ///
+    /// The grid stores `(chain_idx, residue_idx, atom_idx)` tuples, allowing efficient
+    /// retrieval of atoms within a spatial neighborhood.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_size` - The side length of each spatial bin.
+    ///
+    /// # Returns
+    ///
+    /// A [`Grid`] containing all atoms in the structure.
+    pub fn spatial_grid(&self, cell_size: f64) -> Grid<(usize, usize, usize)> {
+        let mut items = Vec::with_capacity(self.atom_count());
+        for (c_idx, chain) in self.chains.iter().enumerate() {
+            for (r_idx, residue) in chain.iter_residues().enumerate() {
+                for (a_idx, atom) in residue.iter_atoms().enumerate() {
+                    items.push((atom.pos, (c_idx, r_idx, a_idx)));
+                }
+            }
+        }
+        Grid::new(items, cell_size)
     }
 }
 
