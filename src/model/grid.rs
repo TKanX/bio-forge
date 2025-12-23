@@ -298,7 +298,7 @@ impl<'a, T> Iterator for GridNeighborhood<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if self.curr_item_idx != SENTINEL {
-                let (pos, item) = &self.grid.items[self.curr_item_idx as usize];
+                let (_, item) = &self.grid.items[self.curr_item_idx as usize];
                 self.curr_item_idx = self.grid.next[self.curr_item_idx as usize];
                 return Some(item);
             }
@@ -325,5 +325,123 @@ impl<'a, T> Iterator for GridNeighborhood<'a, T> {
                 self.curr_item_idx = self.grid.head[cell_idx];
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::types::Point;
+
+    #[test]
+    fn grid_bins_points_correctly() {
+        let points = vec![
+            (Point::new(0.5, 0.5, 0.5), 1),
+            (Point::new(1.5, 0.5, 0.5), 2),
+            (Point::new(0.5, 1.5, 0.5), 3),
+        ];
+
+        let grid = Grid::new(points, 1.0);
+
+        assert_eq!(grid.dims, Vector3::new(2, 2, 1));
+
+        let center = Point::new(0.5, 0.5, 0.5);
+        let neighbors: Vec<_> = grid.neighbors(&center, 0.1).collect();
+        assert!(neighbors.contains(&&1));
+        assert!(!neighbors.contains(&&2));
+    }
+
+    #[test]
+    fn grid_neighbors_returns_nearby_items() {
+        let points = vec![
+            (Point::new(0.0, 0.0, 0.0), "A"),
+            (Point::new(10.0, 0.0, 0.0), "B"),
+        ];
+        let grid = Grid::new(points, 2.0);
+
+        let center = Point::new(0.1, 0.1, 0.1);
+        let neighbors: Vec<_> = grid.neighbors(&center, 1.0).collect();
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(*neighbors[0], "A");
+    }
+
+    #[test]
+    fn grid_handles_empty_input() {
+        let points: Vec<(Point, i32)> = vec![];
+        let grid = Grid::new(points, 1.0);
+        assert_eq!(grid.items.len(), 0);
+        assert_eq!(grid.neighbors(&Point::origin(), 1.0).count(), 0);
+    }
+
+    #[test]
+    fn grid_handles_dense_packing() {
+        let mut points = Vec::new();
+        for i in 0..100 {
+            points.push((Point::new(0.1, 0.1, 0.1), i));
+        }
+        let grid = Grid::new(points, 1.0);
+
+        let center = Point::new(0.1, 0.1, 0.1);
+        let count = grid.neighbors(&center, 0.5).count();
+        assert_eq!(count, 100);
+    }
+
+    #[test]
+    fn grid_handles_boundary_conditions() {
+        let points = vec![
+            (Point::new(0.0, 0.0, 0.0), 1),
+            (Point::new(10.0, 10.0, 10.0), 2),
+        ];
+        let grid = Grid::new(points, 1.0);
+
+        let center = Point::new(0.0, 0.0, 0.0);
+        assert!(grid.has_neighbor(&center, 0.1, |&i| i == 1));
+
+        let center = Point::new(10.0, 10.0, 10.0);
+        assert!(grid.has_neighbor(&center, 0.1, |&i| i == 2));
+    }
+
+    #[test]
+    fn grid_exact_filtering_works() {
+        let points = vec![
+            (Point::new(0.0, 0.0, 0.0), "Center"),
+            (Point::new(0.9, 0.0, 0.0), "Inside"),
+            (Point::new(1.1, 0.0, 0.0), "Outside"),
+        ];
+        let grid = Grid::new(points, 2.0);
+
+        let center = Point::new(0.0, 0.0, 0.0);
+        let radius = 1.0;
+
+        let coarse_count = grid.neighbors(&center, radius).count();
+        assert_eq!(coarse_count, 3);
+
+        let exact_neighbors: Vec<_> = grid.neighbors(&center, radius).exact().collect();
+        assert_eq!(exact_neighbors.len(), 2);
+        assert!(exact_neighbors.contains(&&"Center"));
+        assert!(exact_neighbors.contains(&&"Inside"));
+        assert!(!exact_neighbors.contains(&&"Outside"));
+    }
+
+    #[test]
+    fn grid_exact_filtering_handles_empty_grid() {
+        let points: Vec<(Point, i32)> = vec![];
+        let grid = Grid::new(points, 1.0);
+
+        let count = grid.neighbors(&Point::origin(), 1.0).exact().count();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn grid_exact_filtering_handles_boundary_points() {
+        let points = vec![(Point::new(1.0, 0.0, 0.0), "OnBoundary")];
+        let grid = Grid::new(points, 2.0);
+
+        let center = Point::new(0.0, 0.0, 0.0);
+        let count = grid.neighbors(&center, 1.0).exact().count();
+        assert_eq!(count, 1);
+
+        let count = grid.neighbors(&center, 0.99).exact().count();
+        assert_eq!(count, 0);
     }
 }
