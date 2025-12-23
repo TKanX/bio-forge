@@ -28,10 +28,14 @@ anyhow = { version = "1.0.100", optional = true }
 clap = { version = "4.5.53", features = ["derive"], optional = true }
 prettytable-rs = { version = "0.10.0", optional = true }
 indicatif = { version = "0.18.3", optional = true }
+getrandom = { version = "0.3.4", default-features = false, features = [
+    "wasm_js",
+], optional = true }
 
 [lib]
 name = "bio_forge"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "bioforge"
@@ -39,14 +43,10 @@ path = "src/bin/bioforge.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
-cli = [
-    "dep:anyhow",
-    "dep:clap",
-    "dep:prettytable-rs",
-    "dep:indicatif",
-    "dep:is-terminal",
-]
+default = ["cli", "parallel"]
+cli = ["dep:anyhow", "dep:clap", "dep:prettytable-rs", "dep:indicatif"]
+parallel = ["dep:rayon"]
+wasm = ["dep:getrandom"]
 
 [profile.release]
 opt-level = 3
