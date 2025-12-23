@@ -73,6 +73,7 @@ struct WriterContext<W> {
     writer: W,
     current_atom_id: usize,
     atom_index_to_id: HashMap<usize, usize>,
+    residue_label_map: HashMap<(String, i32, Option<char>), String>,
 }
 
 impl<W: Write> WriterContext<W> {
@@ -86,6 +87,7 @@ impl<W: Write> WriterContext<W> {
             writer,
             current_atom_id: 1,
             atom_index_to_id: HashMap::new(),
+            residue_label_map: HashMap::new(),
         }
     }
 
@@ -221,6 +223,7 @@ impl<W: Write> WriterContext<W> {
         writeln!(self.writer, "_atom_site.auth_atom_id").map_err(|e| Error::from_io(e, None))?;
 
         self.atom_index_to_id.clear();
+        self.residue_label_map.clear();
         let mut entity_ids: HashMap<smol_str::SmolStr, usize> = HashMap::new();
         let mut next_entity_id = 1usize;
         let mut global_atom_index = 0usize;
@@ -245,6 +248,11 @@ impl<W: Write> WriterContext<W> {
                 } else {
                     ".".to_string()
                 };
+
+                self.residue_label_map.insert(
+                    (chain_id.to_string(), residue.id, residue.insertion_code),
+                    label_seq_id.clone(),
+                );
 
                 for atom in residue.iter_atoms() {
                     let group_pdb = if is_polymer { "ATOM" } else { "HETATM" };
@@ -423,6 +431,17 @@ impl<W: Write> WriterContext<W> {
             let (chain1, res1, atom1) = atom_lookup[bond.a1_idx];
             let (chain2, res2, atom2) = atom_lookup[bond.a2_idx];
 
+            let label_seq_1 = self
+                .residue_label_map
+                .get(&(chain1.id.to_string(), res1.id, res1.insertion_code))
+                .map(|s| s.as_str())
+                .unwrap_or("?");
+            let label_seq_2 = self
+                .residue_label_map
+                .get(&(chain2.id.to_string(), res2.id, res2.insertion_code))
+                .map(|s| s.as_str())
+                .unwrap_or("?");
+
             let conn_id = format!("conn_{:04}", conn_idx + 1);
             let conn_type_id = "covale";
             let symmetry = "1_555";
@@ -451,7 +470,7 @@ impl<W: Write> WriterContext<W> {
                 pt1_atom = quote_string(&atom1.name),
                 pt1_res = quote_string(&res1.name),
                 pt1_asym = quote_string(&chain1.id),
-                pt1_seq = res1.id,
+                pt1_seq = label_seq_1,
                 pt1_ins = ins1,
                 symmetry = symmetry,
                 pt1_auth_asym = quote_string(&chain1.id),
@@ -460,7 +479,7 @@ impl<W: Write> WriterContext<W> {
                 pt2_atom = quote_string(&atom2.name),
                 pt2_res = quote_string(&res2.name),
                 pt2_asym = quote_string(&chain2.id),
-                pt2_seq = res2.id,
+                pt2_seq = label_seq_2,
                 pt2_ins = ins2,
                 pt2_auth_asym = quote_string(&chain2.id),
                 pt2_auth_res = quote_string(&res2.name),
