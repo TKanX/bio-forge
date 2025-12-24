@@ -13,6 +13,7 @@ use crate::model::{
     types::{Element, ResidueCategory, ResiduePosition},
 };
 use crate::ops::error::Error;
+use crate::utils::parallel::*;
 use nalgebra::{Matrix3, Point3, Rotation3, Vector3};
 use std::collections::HashSet;
 
@@ -33,22 +34,10 @@ use std::collections::HashSet;
 ///
 /// Propagates errors such as missing templates or alignment issues.
 pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
-    let mut targets = Vec::new();
-    for chain in structure.iter_chains() {
-        for residue in chain.iter_residues() {
-            if residue.category == ResidueCategory::Standard {
-                targets.push((chain.id.clone(), residue.id, residue.insertion_code));
-            }
-        }
-    }
-
-    for (chain_id, res_id, ic) in targets {
-        if let Some(residue) = structure.find_residue_mut(&chain_id, res_id, ic) {
-            repair_residue(residue)?;
-        }
-    }
-
-    Ok(())
+    structure
+        .par_residues_mut()
+        .filter(|r| r.category == ResidueCategory::Standard)
+        .try_for_each(|residue| repair_residue(residue))
 }
 
 /// Cleans and rebuilds an individual residue using its template definition.
