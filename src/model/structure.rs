@@ -8,6 +8,7 @@ use super::chain::Chain;
 use super::grid::Grid;
 use super::residue::Residue;
 use super::types::Point;
+use crate::utils::parallel::*;
 use std::fmt;
 
 /// High-level biomolecular assembly composed of zero or more chains.
@@ -200,6 +201,74 @@ impl Structure {
         self.chains.iter_mut()
     }
 
+    /// Provides a parallel iterator over immutable chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Chain`.
+    #[cfg(feature = "parallel")]
+    pub fn par_chains(&self) -> impl IndexedParallelIterator<Item = &Chain> {
+        self.chains.par_iter()
+    }
+
+    /// Provides a parallel iterator over immutable chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_chains(&self) -> impl IndexedParallelIterator<Item = &Chain> {
+        self.chains.par_iter()
+    }
+
+    /// Provides a parallel iterator over mutable chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Chain`.
+    #[cfg(feature = "parallel")]
+    pub fn par_chains_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Chain> {
+        self.chains.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over mutable chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_chains_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Chain> {
+        self.chains.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over immutable residues across all chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues(&self) -> impl ParallelIterator<Item = &Residue> {
+        self.chains.par_iter().flat_map(|c| c.par_residues())
+    }
+
+    /// Provides a parallel iterator over immutable residues across all chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues(&self) -> impl ParallelIterator<Item = &Residue> {
+        self.chains.par_iter().flat_map(|c| c.par_residues())
+    }
+
+    /// Provides a parallel iterator over mutable residues across all chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues_mut(&mut self) -> impl ParallelIterator<Item = &mut Residue> {
+        self.chains
+            .par_iter_mut()
+            .flat_map(|c| c.par_residues_mut())
+    }
+
+    /// Provides a parallel iterator over mutable residues across all chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues_mut(&mut self) -> impl ParallelIterator<Item = &mut Residue> {
+        self.chains
+            .par_iter_mut()
+            .flat_map(|c| c.par_residues_mut())
+    }
+
     /// Iterates over immutable atoms across all chains.
     ///
     /// # Returns
@@ -213,7 +282,7 @@ impl Structure {
     ///
     /// # Returns
     ///
-    /// An iterator yielding `&mut Atom` for direct coordinate editing.
+    /// An iterator yielding `&mut Atom` in chain/residue order.
     pub fn iter_atoms_mut(&mut self) -> impl Iterator<Item = &mut super::atom::Atom> {
         self.chains.iter_mut().flat_map(|c| c.iter_atoms_mut())
     }
@@ -317,14 +386,21 @@ impl Structure {
     ///
     /// A [`Grid`] containing all atoms in the structure.
     pub fn spatial_grid(&self, cell_size: f64) -> Grid<(usize, usize, usize)> {
-        let mut items = Vec::with_capacity(self.atom_count());
-        for (c_idx, chain) in self.chains.iter().enumerate() {
-            for (r_idx, residue) in chain.iter_residues().enumerate() {
-                for (a_idx, atom) in residue.iter_atoms().enumerate() {
-                    items.push((atom.pos, (c_idx, r_idx, a_idx)));
-                }
-            }
-        }
+        let items: Vec<_> = self
+            .par_chains()
+            .enumerate()
+            .flat_map(|(c_idx, chain)| {
+                chain
+                    .par_residues()
+                    .enumerate()
+                    .flat_map_iter(move |(r_idx, residue)| {
+                        residue
+                            .iter_atoms()
+                            .enumerate()
+                            .map(move |(a_idx, atom)| (atom.pos, (c_idx, r_idx, a_idx)))
+                    })
+            })
+            .collect();
         Grid::new(items, cell_size)
     }
 }
