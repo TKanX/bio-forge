@@ -210,6 +210,18 @@ impl Chain {
         self.residues.retain(|residue| f(residue));
     }
 
+    /// Retains only residues that satisfy the provided predicate, allowing mutation.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Predicate invoked for each mutable residue; keep the residue when it returns `true`.
+    pub fn retain_residues_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Residue) -> bool,
+    {
+        self.residues.retain_mut(|residue| f(residue));
+    }
+
     /// Removes a residue by identifier and returns ownership if found.
     ///
     /// # Arguments
