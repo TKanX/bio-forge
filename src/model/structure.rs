@@ -928,6 +928,77 @@ mod tests {
     }
 
     #[test]
+    fn structure_retain_residues_mut_filters_and_modifies() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        chain_a.add_residue(make_residue(2, "GLY"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(3, "SER"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.retain_residues_mut(|chain_id, residue| {
+            if chain_id == "A" && residue.id == 1 {
+                residue.name = format!("{}_MOD", residue.name).into();
+                true
+            } else {
+                false
+            }
+        });
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue_count(), 1);
+        assert_eq!(chain_a.residue(1, None).unwrap().name, "ALA_MOD");
+        assert!(structure.chain("B").unwrap().is_empty());
+    }
+
+    #[test]
+    fn structure_par_retain_residues_filters_correctly() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        chain_a.add_residue(make_residue(2, "GLY"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(3, "SER"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.par_retain_residues(|chain_id, residue| chain_id == "A" && residue.id == 1);
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue_count(), 1);
+        assert!(chain_a.residue(1, None).is_some());
+        assert!(structure.chain("B").unwrap().is_empty());
+    }
+
+    #[test]
+    fn structure_par_retain_residues_mut_filters_and_modifies() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        chain_a.add_residue(make_residue(2, "GLY"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(3, "SER"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.par_retain_residues_mut(|chain_id, residue| {
+            if chain_id == "A" && residue.id == 1 {
+                residue.name = format!("{}_MOD", residue.name).into();
+                true
+            } else {
+                false
+            }
+        });
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue_count(), 1);
+        assert_eq!(chain_a.residue(1, None).unwrap().name, "ALA_MOD");
+        assert!(structure.chain("B").unwrap().is_empty());
+    }
+
+    #[test]
     fn structure_prune_empty_chains_removes_them() {
         let mut structure = Structure::new();
         let mut chain_a = Chain::new("A");
