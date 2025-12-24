@@ -305,6 +305,23 @@ impl Structure {
         }
     }
 
+    /// Retains residues that satisfy a predicate, removing all others (Mutable version).
+    ///
+    /// The predicate receives the chain ID and a mutable residue reference.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Closure returning `true` to keep the residue.
+    pub fn retain_residues_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&str, &mut Residue) -> bool,
+    {
+        for chain in &mut self.chains {
+            let chain_id = chain.id.clone();
+            chain.retain_residues_mut(|residue| f(&chain_id, residue));
+        }
+    }
+
     /// Removes any chain that became empty after residue pruning.
     pub fn prune_empty_chains(&mut self) {
         self.chains.retain(|chain| !chain.is_empty());
