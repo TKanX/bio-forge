@@ -721,6 +721,73 @@ mod tests {
     }
 
     #[test]
+    fn structure_par_chains_iterates_correctly() {
+        let mut structure = Structure::new();
+        structure.add_chain(Chain::new("A"));
+        structure.add_chain(Chain::new("B"));
+
+        let ids: Vec<String> = structure.par_chains().map(|c| c.id.to_string()).collect();
+
+        assert_eq!(ids, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn structure_par_chains_mut_iterates_correctly() {
+        let mut structure = Structure::new();
+        structure.add_chain(Chain::new("A"));
+        structure.add_chain(Chain::new("B"));
+
+        structure.par_chains_mut().for_each(|c| {
+            c.id = format!("{}_MOD", c.id).into();
+        });
+
+        assert_eq!(structure.chain("A_MOD").unwrap().id, "A_MOD");
+        assert_eq!(structure.chain("B_MOD").unwrap().id, "B_MOD");
+    }
+
+    #[test]
+    fn structure_par_residues_iterates_correctly() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(2, "GLY"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        let count = structure.par_residues().count();
+        assert_eq!(count, 2);
+
+        let names: Vec<String> = structure
+            .par_residues()
+            .map(|r| r.name.to_string())
+            .collect();
+        assert!(names.contains(&"ALA".to_string()));
+        assert!(names.contains(&"GLY".to_string()));
+    }
+
+    #[test]
+    fn structure_par_residues_mut_iterates_correctly() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(2, "GLY"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.par_residues_mut().for_each(|r| {
+            r.name = format!("{}_MOD", r.name).into();
+        });
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue(1, None).unwrap().name, "ALA_MOD");
+
+        let chain_b = structure.chain("B").unwrap();
+        assert_eq!(chain_b.residue(2, None).unwrap().name, "GLY_MOD");
+    }
+
+    #[test]
     fn structure_iter_atoms_iterates_over_all_atoms() {
         let mut structure = Structure::new();
         let mut chain = Chain::new("A");
