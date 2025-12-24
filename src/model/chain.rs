@@ -459,6 +459,30 @@ mod tests {
     }
 
     #[test]
+    fn chain_par_residues_iterates_correctly() {
+        let mut chain = Chain::new("A");
+        chain.add_residue(sample_residue(1, "ALA"));
+        chain.add_residue(sample_residue(2, "GLY"));
+
+        let ids: Vec<i32> = chain.par_residues().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn chain_par_residues_mut_iterates_correctly() {
+        let mut chain = Chain::new("A");
+        chain.add_residue(sample_residue(1, "ALA"));
+        chain.add_residue(sample_residue(2, "GLY"));
+
+        chain.par_residues_mut().for_each(|r| {
+            r.id += 10;
+        });
+
+        assert_eq!(chain.residue(11, None).unwrap().name, "ALA");
+        assert_eq!(chain.residue(12, None).unwrap().name, "GLY");
+    }
+
+    #[test]
     fn chain_iter_atoms_iterates_over_all_atoms() {
         let mut chain = Chain::new("A");
         let mut residue1 = Residue::new(
