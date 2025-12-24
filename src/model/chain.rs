@@ -6,6 +6,7 @@
 //! structure.
 
 use super::residue::Residue;
+use crate::utils::parallel::*;
 use smol_str::SmolStr;
 use std::fmt;
 
@@ -142,6 +143,38 @@ impl Chain {
     /// A mutable slice iterator that allows in-place modifications.
     pub fn iter_residues_mut(&mut self) -> std::slice::IterMut<'_, Residue> {
         self.residues.iter_mut()
+    }
+
+    /// Provides a parallel iterator over immutable residues.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues(&self) -> impl IndexedParallelIterator<Item = &Residue> {
+        self.residues.par_iter()
+    }
+
+    /// Provides a parallel iterator over immutable residues (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues(&self) -> impl IndexedParallelIterator<Item = &Residue> {
+        self.residues.par_iter()
+    }
+
+    /// Provides a parallel iterator over mutable residues.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Residue> {
+        self.residues.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over mutable residues (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Residue> {
+        self.residues.par_iter_mut()
     }
 
     /// Iterates over all atoms contained in the chain.
