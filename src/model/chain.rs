@@ -6,6 +6,8 @@
 //! structure.
 
 use super::residue::Residue;
+use crate::utils::parallel::*;
+use smol_str::SmolStr;
 use std::fmt;
 
 /// Polymer chain containing an ordered list of residues.
@@ -16,7 +18,7 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chain {
     /// Chain identifier matching the source structure (usually a single character).
-    pub id: String,
+    pub id: SmolStr,
     /// Internal storage preserving insertion order for residues.
     residues: Vec<Residue>,
 }
@@ -36,7 +38,7 @@ impl Chain {
     /// A new `Chain` with no residues.
     pub fn new(id: &str) -> Self {
         Self {
-            id: id.to_string(),
+            id: SmolStr::new(id),
             residues: Vec::new(),
         }
     }
@@ -59,6 +61,17 @@ impl Chain {
             self.id
         );
         self.residues.push(residue);
+    }
+
+    /// Reserves capacity for at least `additional` more residues to be inserted.
+    ///
+    /// Use this to avoid frequent reallocations when adding a known number of residues.
+    ///
+    /// # Arguments
+    ///
+    /// * `additional` - The number of residues to reserve space for.
+    pub fn reserve(&mut self, additional: usize) {
+        self.residues.reserve(additional);
     }
 
     /// Looks up a residue by identifier and optional insertion code.
@@ -113,6 +126,15 @@ impl Chain {
         self.residues.len()
     }
 
+    /// Counts all atoms across every residue in the chain.
+    ///
+    /// # Returns
+    ///
+    /// Total atom count as `usize`.
+    pub fn atom_count(&self) -> usize {
+        self.residues.iter().map(|r| r.atom_count()).sum()
+    }
+
     /// Indicates whether the chain contains no residues.
     ///
     /// # Returns
@@ -141,6 +163,38 @@ impl Chain {
     /// A mutable slice iterator that allows in-place modifications.
     pub fn iter_residues_mut(&mut self) -> std::slice::IterMut<'_, Residue> {
         self.residues.iter_mut()
+    }
+
+    /// Provides a parallel iterator over immutable residues.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues(&self) -> impl IndexedParallelIterator<Item = &Residue> {
+        self.residues.par_iter()
+    }
+
+    /// Provides a parallel iterator over immutable residues (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues(&self) -> impl IndexedParallelIterator<Item = &Residue> {
+        self.residues.par_iter()
+    }
+
+    /// Provides a parallel iterator over mutable residues.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Residue> {
+        self.residues.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over mutable residues (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Residue> {
+        self.residues.par_iter_mut()
     }
 
     /// Iterates over all atoms contained in the chain.
@@ -174,6 +228,18 @@ impl Chain {
         F: FnMut(&Residue) -> bool,
     {
         self.residues.retain(|residue| f(residue));
+    }
+
+    /// Retains only residues that satisfy the provided predicate, allowing mutation.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Predicate invoked for each mutable residue; keep the residue when it returns `true`.
+    pub fn retain_residues_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Residue) -> bool,
+    {
+        self.residues.retain_mut(|residue| f(residue));
     }
 
     /// Removes a residue by identifier and returns ownership if found.
@@ -250,6 +316,16 @@ mod tests {
         assert_eq!(chain.residue_count(), 1);
         assert!(chain.residue(1, None).is_some());
         assert_eq!(chain.residue(1, None).unwrap().name, "ALA");
+    }
+
+    #[test]
+    fn chain_reserve_increases_capacity() {
+        let mut chain = Chain::new("A");
+        let initial_capacity = chain.residues.capacity();
+
+        chain.reserve(50);
+
+        assert!(chain.residues.capacity() >= initial_capacity + 50);
     }
 
     #[test]
@@ -353,6 +429,23 @@ mod tests {
     }
 
     #[test]
+    fn chain_atom_count_calculates_total_atoms() {
+        let mut chain = Chain::new("A");
+
+        let mut r1 = sample_residue(1, "ALA");
+        r1.add_atom(Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0)));
+        r1.add_atom(Atom::new("CB", Element::C, Point::new(0.0, 0.0, 0.0)));
+
+        let mut r2 = sample_residue(2, "GLY");
+        r2.add_atom(Atom::new("N", Element::N, Point::new(0.0, 0.0, 0.0)));
+
+        chain.add_residue(r1);
+        chain.add_residue(r2);
+
+        assert_eq!(chain.atom_count(), 3);
+    }
+
+    #[test]
     fn chain_is_empty_returns_true_for_empty_chain() {
         let chain = Chain::new("A");
 
@@ -422,6 +515,30 @@ mod tests {
             chain.residue(1, None).unwrap().position,
             crate::model::types::ResiduePosition::Internal
         );
+    }
+
+    #[test]
+    fn chain_par_residues_iterates_correctly() {
+        let mut chain = Chain::new("A");
+        chain.add_residue(sample_residue(1, "ALA"));
+        chain.add_residue(sample_residue(2, "GLY"));
+
+        let ids: Vec<i32> = chain.par_residues().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn chain_par_residues_mut_iterates_correctly() {
+        let mut chain = Chain::new("A");
+        chain.add_residue(sample_residue(1, "ALA"));
+        chain.add_residue(sample_residue(2, "GLY"));
+
+        chain.par_residues_mut().for_each(|r| {
+            r.id += 10;
+        });
+
+        assert_eq!(chain.residue(11, None).unwrap().name, "ALA");
+        assert_eq!(chain.residue(12, None).unwrap().name, "GLY");
     }
 
     #[test]
@@ -638,6 +755,28 @@ mod tests {
 
         let ids: Vec<i32> = chain.iter_residues().map(|r| r.id).collect();
         assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn chain_retain_residues_mut_filters_and_modifies() {
+        let mut chain = Chain::new("A");
+        chain.add_residue(sample_residue(1, "ALA"));
+        chain.add_residue(sample_residue(2, "GLY"));
+        chain.add_residue(sample_residue(3, "SER"));
+
+        chain.retain_residues_mut(|residue| {
+            if residue.id % 2 == 1 {
+                residue.name = format!("{}_MOD", residue.name).into();
+                true
+            } else {
+                false
+            }
+        });
+
+        let ids: Vec<i32> = chain.iter_residues().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1, 3]);
+        assert_eq!(chain.residue(1, None).unwrap().name, "ALA_MOD");
+        assert_eq!(chain.residue(3, None).unwrap().name, "SER_MOD");
     }
 
     #[test]

@@ -80,20 +80,15 @@ impl CleanConfig {
 /// Currently never returns [`Error`] variants but reserves the signature for future
 /// validation failures to stay compatible with other ops APIs.
 pub fn clean_structure(structure: &mut Structure, config: &CleanConfig) -> Result<(), Error> {
-    if config.remove_hydrogens {
-        for chain in structure.iter_chains_mut() {
-            for residue in chain.iter_residues_mut() {
+    structure.par_retain_residues_mut(|_chain_id, residue| {
+        if config.keep_residue_names.contains(residue.name.as_str()) {
+            if config.remove_hydrogens {
                 residue.strip_hydrogens();
             }
-        }
-    }
-
-    structure.retain_residues(|_chain_id, residue| {
-        if config.keep_residue_names.contains(&residue.name) {
             return true;
         }
 
-        if config.remove_residue_names.contains(&residue.name) {
+        if config.remove_residue_names.contains(residue.name.as_str()) {
             return false;
         }
 
@@ -107,6 +102,10 @@ pub fn clean_structure(structure: &mut Structure, config: &CleanConfig) -> Resul
 
         if config.remove_hetero && residue.category == ResidueCategory::Hetero {
             return false;
+        }
+
+        if config.remove_hydrogens {
+            residue.strip_hydrogens();
         }
 
         true

@@ -34,7 +34,7 @@ fn collect_chain_reports(structure: &Structure) -> Vec<ChainReport> {
     structure
         .iter_chains()
         .map(|chain| ChainReport {
-            id: chain.id.clone(),
+            id: chain.id.to_string(),
             residues: chain.residue_count(),
             atoms: chain.iter_atoms().count(),
             polymer: classify_chain(chain).to_string(),

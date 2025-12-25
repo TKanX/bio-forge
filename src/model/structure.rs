@@ -5,8 +5,10 @@
 //! the central container consumed by IO readers, cleaning operations, and solvation tools.
 
 use super::chain::Chain;
+use super::grid::Grid;
 use super::residue::Residue;
 use super::types::Point;
+use crate::utils::parallel::*;
 use std::fmt;
 
 /// High-level biomolecular assembly composed of zero or more chains.
@@ -199,6 +201,114 @@ impl Structure {
         self.chains.iter_mut()
     }
 
+    /// Provides a parallel iterator over immutable chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Chain`.
+    #[cfg(feature = "parallel")]
+    pub fn par_chains(&self) -> impl IndexedParallelIterator<Item = &Chain> {
+        self.chains.par_iter()
+    }
+
+    /// Provides a parallel iterator over immutable chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_chains(&self) -> impl IndexedParallelIterator<Item = &Chain> {
+        self.chains.par_iter()
+    }
+
+    /// Provides a parallel iterator over mutable chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Chain`.
+    #[cfg(feature = "parallel")]
+    pub fn par_chains_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Chain> {
+        self.chains.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over mutable chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_chains_mut(&mut self) -> impl IndexedParallelIterator<Item = &mut Chain> {
+        self.chains.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over immutable residues across all chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues(&self) -> impl ParallelIterator<Item = &Residue> {
+        self.chains.par_iter().flat_map(|c| c.par_residues())
+    }
+
+    /// Provides a parallel iterator over immutable residues across all chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues(&self) -> impl ParallelIterator<Item = &Residue> {
+        self.chains.par_iter().flat_map(|c| c.par_residues())
+    }
+
+    /// Provides a parallel iterator over mutable residues across all chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Residue`.
+    #[cfg(feature = "parallel")]
+    pub fn par_residues_mut(&mut self) -> impl ParallelIterator<Item = &mut Residue> {
+        self.chains
+            .par_iter_mut()
+            .flat_map(|c| c.par_residues_mut())
+    }
+
+    /// Provides a parallel iterator over mutable residues across all chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_residues_mut(&mut self) -> impl ParallelIterator<Item = &mut Residue> {
+        self.chains
+            .par_iter_mut()
+            .flat_map(|c| c.par_residues_mut())
+    }
+
+    /// Provides a parallel iterator over immutable atoms across all chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Atom`.
+    #[cfg(feature = "parallel")]
+    pub fn par_atoms(&self) -> impl ParallelIterator<Item = &super::atom::Atom> {
+        self.chains
+            .par_iter()
+            .flat_map(|c| c.par_residues().flat_map(|r| r.par_atoms()))
+    }
+
+    /// Provides a parallel iterator over immutable atoms across all chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_atoms(&self) -> impl ParallelIterator<Item = &super::atom::Atom> {
+        self.chains
+            .par_iter()
+            .flat_map(|c| c.par_residues().flat_map(|r| r.par_atoms()))
+    }
+
+    /// Provides a parallel iterator over mutable atoms across all chains.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Atom`.
+    #[cfg(feature = "parallel")]
+    pub fn par_atoms_mut(&mut self) -> impl ParallelIterator<Item = &mut super::atom::Atom> {
+        self.chains
+            .par_iter_mut()
+            .flat_map(|c| c.par_residues_mut().flat_map(|r| r.par_atoms_mut()))
+    }
+
+    /// Provides a parallel iterator over mutable atoms across all chains (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_atoms_mut(&mut self) -> impl ParallelIterator<Item = &mut super::atom::Atom> {
+        self.chains
+            .par_iter_mut()
+            .flat_map(|c| c.par_residues_mut().flat_map(|r| r.par_atoms_mut()))
+    }
+
     /// Iterates over immutable atoms across all chains.
     ///
     /// # Returns
@@ -212,7 +322,7 @@ impl Structure {
     ///
     /// # Returns
     ///
-    /// An iterator yielding `&mut Atom` for direct coordinate editing.
+    /// An iterator yielding `&mut Atom` in chain/residue order.
     pub fn iter_atoms_mut(&mut self) -> impl Iterator<Item = &mut super::atom::Atom> {
         self.chains.iter_mut().flat_map(|c| c.iter_atoms_mut())
     }
@@ -233,6 +343,76 @@ impl Structure {
             let chain_id = chain.id.clone();
             chain.retain_residues(|residue| f(&chain_id, residue));
         }
+    }
+
+    /// Retains residues that satisfy a predicate, removing all others (Mutable version).
+    ///
+    /// The predicate receives the chain ID and a mutable residue reference.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Closure returning `true` to keep the residue.
+    pub fn retain_residues_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&str, &mut Residue) -> bool,
+    {
+        for chain in &mut self.chains {
+            let chain_id = chain.id.clone();
+            chain.retain_residues_mut(|residue| f(&chain_id, residue));
+        }
+    }
+
+    /// Retains residues that satisfy a predicate, removing all others (Parallel version).
+    ///
+    /// This method processes chains in parallel when the `parallel` feature is enabled.
+    /// The predicate must be thread-safe (`Sync` + `Send`) and immutable (`Fn`).
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Thread-safe closure returning `true` to keep the residue.
+    #[cfg(feature = "parallel")]
+    pub fn par_retain_residues<F>(&mut self, f: F)
+    where
+        F: Fn(&str, &Residue) -> bool + Sync + Send,
+    {
+        self.chains.par_iter_mut().for_each(|chain| {
+            let chain_id = chain.id.clone();
+            chain.retain_residues(|residue| f(&chain_id, residue));
+        });
+    }
+
+    /// Retains residues that satisfy a predicate, removing all others (Sequential fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub fn par_retain_residues<F>(&mut self, f: F)
+    where
+        F: Fn(&str, &Residue) -> bool + Sync + Send,
+    {
+        self.retain_residues(f);
+    }
+
+    /// Retains residues that satisfy a predicate, removing all others (Parallel Mutable version).
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Thread-safe closure returning `true` to keep the residue.
+    #[cfg(feature = "parallel")]
+    pub fn par_retain_residues_mut<F>(&mut self, f: F)
+    where
+        F: Fn(&str, &mut Residue) -> bool + Sync + Send,
+    {
+        self.chains.par_iter_mut().for_each(|chain| {
+            let chain_id = chain.id.clone();
+            chain.retain_residues_mut(|residue| f(&chain_id, residue));
+        });
+    }
+
+    /// Retains residues that satisfy a predicate, removing all others (Sequential Mutable fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub fn par_retain_residues_mut<F>(&mut self, f: F)
+    where
+        F: Fn(&str, &mut Residue) -> bool + Sync + Send,
+    {
+        self.retain_residues_mut(f);
     }
 
     /// Removes any chain that became empty after residue pruning.
@@ -301,6 +481,37 @@ impl Structure {
         } else {
             Point::origin()
         }
+    }
+
+    /// Constructs a spatial grid indexing all atoms in the structure.
+    ///
+    /// The grid stores `(chain_idx, residue_idx, atom_idx)` tuples, allowing efficient
+    /// retrieval of atoms within a spatial neighborhood.
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_size` - The side length of each spatial bin.
+    ///
+    /// # Returns
+    ///
+    /// A [`Grid`] containing all atoms in the structure.
+    pub fn spatial_grid(&self, cell_size: f64) -> Grid<(usize, usize, usize)> {
+        let items: Vec<_> = self
+            .par_chains()
+            .enumerate()
+            .flat_map(|(c_idx, chain)| {
+                chain
+                    .par_residues()
+                    .enumerate()
+                    .flat_map_iter(move |(r_idx, residue)| {
+                        residue
+                            .iter_atoms()
+                            .enumerate()
+                            .map(move |(a_idx, atom)| (atom.pos, (c_idx, r_idx, a_idx)))
+                    })
+            })
+            .collect();
+        Grid::new(items, cell_size)
     }
 }
 
@@ -613,10 +824,121 @@ mod tests {
         structure.add_chain(Chain::new("A"));
 
         for chain in structure.iter_chains_mut() {
-            chain.id = "MODIFIED".to_string();
+            chain.id = "MODIFIED".into();
         }
 
         assert_eq!(structure.chain("MODIFIED").unwrap().id, "MODIFIED");
+    }
+
+    #[test]
+    fn structure_par_chains_iterates_correctly() {
+        let mut structure = Structure::new();
+        structure.add_chain(Chain::new("A"));
+        structure.add_chain(Chain::new("B"));
+
+        let ids: Vec<String> = structure.par_chains().map(|c| c.id.to_string()).collect();
+
+        assert_eq!(ids, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn structure_par_chains_mut_iterates_correctly() {
+        let mut structure = Structure::new();
+        structure.add_chain(Chain::new("A"));
+        structure.add_chain(Chain::new("B"));
+
+        structure.par_chains_mut().for_each(|c| {
+            c.id = format!("{}_MOD", c.id).into();
+        });
+
+        assert_eq!(structure.chain("A_MOD").unwrap().id, "A_MOD");
+        assert_eq!(structure.chain("B_MOD").unwrap().id, "B_MOD");
+    }
+
+    #[test]
+    fn structure_par_residues_iterates_correctly() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(2, "GLY"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        let count = structure.par_residues().count();
+        assert_eq!(count, 2);
+
+        let names: Vec<String> = structure
+            .par_residues()
+            .map(|r| r.name.to_string())
+            .collect();
+        assert!(names.contains(&"ALA".to_string()));
+        assert!(names.contains(&"GLY".to_string()));
+    }
+
+    #[test]
+    fn structure_par_residues_mut_iterates_correctly() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(2, "GLY"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.par_residues_mut().for_each(|r| {
+            r.name = format!("{}_MOD", r.name).into();
+        });
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue(1, None).unwrap().name, "ALA_MOD");
+
+        let chain_b = structure.chain("B").unwrap();
+        assert_eq!(chain_b.residue(2, None).unwrap().name, "GLY_MOD");
+    }
+
+    #[test]
+    fn structure_par_atoms_iterates_correctly() {
+        let mut structure = Structure::new();
+        let mut chain = Chain::new("A");
+        let mut r1 = make_residue(1, "ALA");
+        r1.add_atom(Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0)));
+        let mut r2 = make_residue(2, "GLY");
+        r2.add_atom(Atom::new("N", Element::N, Point::new(1.0, 0.0, 0.0)));
+
+        chain.add_residue(r1);
+        chain.add_residue(r2);
+        structure.add_chain(chain);
+
+        let count = structure.par_atoms().count();
+        assert_eq!(count, 2);
+
+        let names: Vec<String> = structure.par_atoms().map(|a| a.name.to_string()).collect();
+        assert!(names.contains(&"CA".to_string()));
+        assert!(names.contains(&"N".to_string()));
+    }
+
+    #[test]
+    fn structure_par_atoms_mut_iterates_correctly() {
+        let mut structure = Structure::new();
+        let mut chain = Chain::new("A");
+        let mut r1 = make_residue(1, "ALA");
+        r1.add_atom(Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0)));
+        chain.add_residue(r1);
+        structure.add_chain(chain);
+
+        structure.par_atoms_mut().for_each(|a| {
+            a.pos.x += 10.0;
+        });
+
+        let atom = structure
+            .chain("A")
+            .unwrap()
+            .residue(1, None)
+            .unwrap()
+            .atom("CA")
+            .unwrap();
+        assert!((atom.pos.x - 10.0).abs() < 1e-6);
     }
 
     #[test]
@@ -690,6 +1012,77 @@ mod tests {
     }
 
     #[test]
+    fn structure_retain_residues_mut_filters_and_modifies() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        chain_a.add_residue(make_residue(2, "GLY"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(3, "SER"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.retain_residues_mut(|chain_id, residue| {
+            if chain_id == "A" && residue.id == 1 {
+                residue.name = format!("{}_MOD", residue.name).into();
+                true
+            } else {
+                false
+            }
+        });
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue_count(), 1);
+        assert_eq!(chain_a.residue(1, None).unwrap().name, "ALA_MOD");
+        assert!(structure.chain("B").unwrap().is_empty());
+    }
+
+    #[test]
+    fn structure_par_retain_residues_filters_correctly() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        chain_a.add_residue(make_residue(2, "GLY"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(3, "SER"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.par_retain_residues(|chain_id, residue| chain_id == "A" && residue.id == 1);
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue_count(), 1);
+        assert!(chain_a.residue(1, None).is_some());
+        assert!(structure.chain("B").unwrap().is_empty());
+    }
+
+    #[test]
+    fn structure_par_retain_residues_mut_filters_and_modifies() {
+        let mut structure = Structure::new();
+        let mut chain_a = Chain::new("A");
+        chain_a.add_residue(make_residue(1, "ALA"));
+        chain_a.add_residue(make_residue(2, "GLY"));
+        let mut chain_b = Chain::new("B");
+        chain_b.add_residue(make_residue(3, "SER"));
+        structure.add_chain(chain_a);
+        structure.add_chain(chain_b);
+
+        structure.par_retain_residues_mut(|chain_id, residue| {
+            if chain_id == "A" && residue.id == 1 {
+                residue.name = format!("{}_MOD", residue.name).into();
+                true
+            } else {
+                false
+            }
+        });
+
+        let chain_a = structure.chain("A").unwrap();
+        assert_eq!(chain_a.residue_count(), 1);
+        assert_eq!(chain_a.residue(1, None).unwrap().name, "ALA_MOD");
+        assert!(structure.chain("B").unwrap().is_empty());
+    }
+
+    #[test]
     fn structure_prune_empty_chains_removes_them() {
         let mut structure = Structure::new();
         let mut chain_a = Chain::new("A");
@@ -725,7 +1118,7 @@ mod tests {
             contexts.push((chain.id.clone(), residue.id, atom.name.clone()));
         }
 
-        assert_eq!(contexts, vec![("A".to_string(), 1, "CA".to_string())]);
+        assert_eq!(contexts, vec![("A".into(), 1, "CA".into())]);
     }
 
     #[test]
@@ -845,5 +1238,92 @@ mod tests {
 
         assert_eq!(structure.chain_count(), cloned.chain_count());
         assert_eq!(structure.box_vectors, cloned.box_vectors);
+    }
+
+    #[test]
+    fn spatial_grid_bins_and_neighbor_queries_work() {
+        let mut structure = Structure::new();
+        let mut chain = Chain::new("A");
+        let mut residue = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+
+        residue.add_atom(Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0)));
+        residue.add_atom(Atom::new("CB", Element::C, Point::new(1.5, 0.0, 0.0)));
+        chain.add_residue(residue);
+        structure.add_chain(chain);
+
+        let grid = structure.spatial_grid(1.0);
+
+        let big_center = structure.geometric_center();
+        let all_count = grid.neighbors(&big_center, 1e6).count();
+        assert_eq!(all_count, structure.atom_count());
+
+        let center = Point::new(0.0, 0.0, 0.0);
+        let neighbors: Vec<_> = grid.neighbors(&center, 0.1).collect();
+        assert_eq!(neighbors.len(), 1);
+
+        let &(c_idx, r_idx, a_idx) = neighbors[0];
+        let chain_ref = structure.iter_chains().nth(c_idx).unwrap();
+        let residue_ref = chain_ref.iter_residues().nth(r_idx).unwrap();
+        let atom_ref = residue_ref.iter_atoms().nth(a_idx).unwrap();
+        assert_eq!(atom_ref.name, "CA");
+
+        let coarse = grid.neighbors(&center, 2.0).count();
+        assert_eq!(coarse, 2);
+
+        let exact: Vec<_> = grid.neighbors(&center, 1.0).exact().collect();
+        assert_eq!(exact.len(), 1);
+    }
+
+    #[test]
+    fn spatial_grid_empty_structure_is_empty() {
+        let structure = Structure::new();
+
+        let grid = structure.spatial_grid(1.0);
+        assert_eq!(grid.neighbors(&Point::origin(), 1.0).count(), 0);
+        assert_eq!(grid.neighbors(&Point::origin(), 1.0).exact().count(), 0);
+    }
+
+    #[test]
+    fn spatial_grid_dense_packing_and_indices_are_consistent() {
+        let mut structure = Structure::new();
+        let mut chain = Chain::new("A");
+        let mut residue = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+
+        for i in 0..50 {
+            residue.add_atom(Atom::new(
+                &format!("X{}", i),
+                Element::C,
+                Point::new(0.1, 0.1, 0.1),
+            ));
+        }
+        chain.add_residue(residue);
+        structure.add_chain(chain);
+
+        let grid = structure.spatial_grid(1.0);
+        let center = Point::new(0.1, 0.1, 0.1);
+        assert_eq!(grid.neighbors(&center, 1e6).count(), structure.atom_count());
+
+        let center = Point::new(0.1, 0.1, 0.1);
+        let count = grid.neighbors(&center, 0.5).count();
+        assert_eq!(count, 50);
+
+        for &(c, r, a) in grid.neighbors(&center, 0.5) {
+            let chain_ref = structure.iter_chains().nth(c).unwrap();
+            let residue_ref = chain_ref.iter_residues().nth(r).unwrap();
+            let atom_ref = residue_ref.iter_atoms().nth(a).unwrap();
+            assert!(atom_ref.name.starts_with('X'));
+        }
     }
 }

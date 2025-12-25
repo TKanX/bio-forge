@@ -13,6 +13,7 @@ use crate::model::{
     types::{Element, ResidueCategory, ResiduePosition},
 };
 use crate::ops::error::Error;
+use crate::utils::parallel::*;
 use nalgebra::{Matrix3, Point3, Rotation3, Vector3};
 use std::collections::HashSet;
 
@@ -33,22 +34,10 @@ use std::collections::HashSet;
 ///
 /// Propagates errors such as missing templates or alignment issues.
 pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
-    let mut targets = Vec::new();
-    for chain in structure.iter_chains() {
-        for residue in chain.iter_residues() {
-            if residue.category == ResidueCategory::Standard {
-                targets.push((chain.id.clone(), residue.id, residue.insertion_code));
-            }
-        }
-    }
-
-    for (chain_id, res_id, ic) in targets {
-        if let Some(residue) = structure.find_residue_mut(&chain_id, res_id, ic) {
-            repair_residue(residue)?;
-        }
-    }
-
-    Ok(())
+    structure
+        .par_residues_mut()
+        .filter(|r| r.category == ResidueCategory::Standard)
+        .try_for_each(repair_residue)
 }
 
 /// Cleans and rebuilds an individual residue using its template definition.
@@ -74,7 +63,7 @@ fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
     let template_name = residue.name.clone();
     let template_view =
         db::get_template(&template_name).ok_or_else(|| Error::MissingInternalTemplate {
-            res_name: template_name.clone(),
+            res_name: template_name.to_string(),
         })?;
 
     let mut valid_names: HashSet<String> = HashSet::new();
@@ -110,8 +99,8 @@ fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
     let atoms_to_remove: Vec<String> = residue
         .atoms()
         .iter()
-        .filter(|a| !valid_names.contains(&a.name))
-        .map(|a| a.name.clone())
+        .filter(|a| !valid_names.contains(a.name.as_str()))
+        .map(|a| a.name.to_string())
         .collect();
 
     for name in atoms_to_remove {
@@ -155,7 +144,7 @@ fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
 
     if align_pairs.is_empty() {
         return Err(Error::alignment_failed(
-            &residue.name,
+            &*residue.name,
             residue.id,
             "No matching heavy atoms found for alignment",
         ));

@@ -6,6 +6,7 @@
 
 use super::atom::Atom;
 use super::types::{ResidueCategory, ResiduePosition, StandardResidue};
+use smol_str::SmolStr;
 use std::fmt;
 
 /// A residue within a biomolecular structure.
@@ -21,7 +22,7 @@ pub struct Residue {
     /// Optional insertion code differentiating records that share the same `id`.
     pub insertion_code: Option<char>,
     /// Original residue name as encountered during parsing.
-    pub name: String,
+    pub name: SmolStr,
     /// Canonical residue assignment if the name maps to a standard alphabet entry.
     pub standard_name: Option<StandardResidue>,
     /// Category describing whether the residue is standard, heterogen, or ion.
@@ -59,7 +60,7 @@ impl Residue {
         Self {
             id,
             insertion_code,
-            name: name.to_string(),
+            name: SmolStr::new(name),
             standard_name,
             category,
             position: ResiduePosition::None,
@@ -202,6 +203,48 @@ impl Residue {
     /// An iterator yielding `&mut Atom` values so callers can edit coordinates or metadata.
     pub fn iter_atoms_mut(&mut self) -> std::slice::IterMut<'_, Atom> {
         self.atoms.iter_mut()
+    }
+
+    /// Provides a parallel iterator over immutable atoms.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&Atom`.
+    #[cfg(feature = "parallel")]
+    pub fn par_atoms(&self) -> impl crate::utils::parallel::IndexedParallelIterator<Item = &Atom> {
+        use crate::utils::parallel::IntoParallelRefIterator;
+        self.atoms.par_iter()
+    }
+
+    /// Provides a parallel iterator over immutable atoms (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_atoms(
+        &self,
+    ) -> impl crate::utils::parallel::IndexedParallelIterator<Item = &Atom> {
+        use crate::utils::parallel::IntoParallelRefIterator;
+        self.atoms.par_iter()
+    }
+
+    /// Provides a parallel iterator over mutable atoms.
+    ///
+    /// # Returns
+    ///
+    /// A parallel iterator yielding `&mut Atom`.
+    #[cfg(feature = "parallel")]
+    pub fn par_atoms_mut(
+        &mut self,
+    ) -> impl crate::utils::parallel::IndexedParallelIterator<Item = &mut Atom> {
+        use crate::utils::parallel::IntoParallelRefMutIterator;
+        self.atoms.par_iter_mut()
+    }
+
+    /// Provides a parallel iterator over mutable atoms (internal fallback).
+    #[cfg(not(feature = "parallel"))]
+    pub(crate) fn par_atoms_mut(
+        &mut self,
+    ) -> impl crate::utils::parallel::IndexedParallelIterator<Item = &mut Atom> {
+        use crate::utils::parallel::IntoParallelRefMutIterator;
+        self.atoms.par_iter_mut()
     }
 
     /// Removes all hydrogen atoms from the residue.
@@ -564,6 +607,50 @@ mod tests {
         for atom in residue.iter_atoms_mut() {
             atom.translate_by(&nalgebra::Vector3::new(1.0, 0.0, 0.0));
         }
+
+        assert!((residue.atom("CA").unwrap().pos.x - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn residue_par_atoms_iterates_correctly() {
+        use crate::utils::parallel::ParallelIterator;
+
+        let mut residue = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        let atom1 = Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0));
+        let atom2 = Atom::new("CB", Element::C, Point::new(1.0, 0.0, 0.0));
+        residue.add_atom(atom1);
+        residue.add_atom(atom2);
+
+        let count = residue.par_atoms().count();
+        assert_eq!(count, 2);
+
+        let names: Vec<String> = residue.par_atoms().map(|a| a.name.to_string()).collect();
+        assert_eq!(names, vec!["CA", "CB"]);
+    }
+
+    #[test]
+    fn residue_par_atoms_mut_iterates_correctly() {
+        use crate::utils::parallel::ParallelIterator;
+
+        let mut residue = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        let atom1 = Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0));
+        residue.add_atom(atom1);
+
+        residue.par_atoms_mut().for_each(|atom| {
+            atom.translate_by(&nalgebra::Vector3::new(1.0, 0.0, 0.0));
+        });
 
         assert!((residue.atom("CA").unwrap().pos.x - 1.0).abs() < 1e-10);
     }

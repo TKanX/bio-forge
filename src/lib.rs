@@ -17,6 +17,7 @@
 
 mod db;
 mod model;
+mod utils;
 
 pub mod io;
 pub mod ops;
@@ -24,6 +25,7 @@ pub mod templates;
 
 pub use model::atom::Atom;
 pub use model::chain::Chain;
+pub use model::grid::{Grid, GridNeighborhood};
 pub use model::residue::Residue;
 pub use model::structure::Structure;
 pub use model::template::Template;
@@ -31,3 +33,6 @@ pub use model::topology::{Bond, Topology};
 pub use model::types::{
     BondOrder, Element, Point, ResidueCategory, ResiduePosition, StandardResidue,
 };
+
+#[cfg(feature = "parallel")]
+pub use utils::parallel;

@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
 use indicatif::{ProgressBar, ProgressStyle};
-use is_terminal::IsTerminal;
+use std::io::IsTerminal;
 
 use bio_forge::io::{
     IoContext, read_mmcif_structure, read_pdb_structure, write_mmcif_structure,

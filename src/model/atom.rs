@@ -6,6 +6,7 @@
 //! the type, ensuring consistent use of the chosen coordinate system.
 
 use super::types::{Element, Point};
+use smol_str::SmolStr;
 use std::fmt;
 
 /// Labeled atom with immutable element identity and mutable position.
@@ -16,7 +17,7 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Atom {
     /// Atom name as it appears in crystallographic or modeling files (e.g., `CA`).
-    pub name: String,
+    pub name: SmolStr,
     /// Chemical element derived from the periodic table definitions.
     pub element: Element,
     /// Cartesian coordinates measured in ångströms.
@@ -40,7 +41,7 @@ impl Atom {
     /// A fully initialized `Atom` instance.
     pub fn new(name: &str, element: Element, pos: Point) -> Self {
         Self {
-            name: name.to_string(),
+            name: SmolStr::new(name),
             element,
             pos,
         }

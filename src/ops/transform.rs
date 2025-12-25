@@ -1,61 +1,131 @@
+//! Geometric transformations for molecular structures.
+//!
+//! This module provides utilities for translating, centering, and rotating structures.
+
 use crate::model::structure::Structure;
 use crate::model::types::Point;
+use crate::utils::parallel::*;
 use nalgebra::{Rotation3, Vector3};
 
+/// Collection of geometric transformation operations for structures.
+///
+/// The `Transform` type groups static methods that mutate structure coordinates in place.
+/// These operations include translations, centering (by geometry or mass), and rotations
+/// about principal axes or via Euler angles.
 pub struct Transform;
 
 impl Transform {
+    /// Translates all atoms by the specified displacement vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure whose atoms will be displaced.
+    /// * `x` - Translation along the x-axis in ångströms.
+    /// * `y` - Translation along the y-axis in ångströms.
+    /// * `z` - Translation along the z-axis in ångströms.
     pub fn translate(structure: &mut Structure, x: f64, y: f64, z: f64) {
         let translation = Vector3::new(x, y, z);
-        for atom in structure.iter_atoms_mut() {
-            atom.translate_by(&translation);
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.translate_by(&translation);
+            }
+        });
     }
 
+    /// Centers the structure's geometric centroid at the target point.
+    ///
+    /// When `target` is `None`, the structure is centered at the origin.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure to be centered.
+    /// * `target` - Optional target point; defaults to the origin.
     pub fn center_geometry(structure: &mut Structure, target: Option<Point>) {
         let current_center = structure.geometric_center();
         let target_point = target.unwrap_or(Point::origin());
         let translation = target_point - current_center;
 
-        for atom in structure.iter_atoms_mut() {
-            atom.translate_by(&translation);
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.translate_by(&translation);
+            }
+        });
     }
 
+    /// Centers the structure's center of mass at the target point.
+    ///
+    /// Mass weighting uses atomic masses from element definitions. When `target` is
+    /// `None`, the structure is centered at the origin.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure to be centered.
+    /// * `target` - Optional target point; defaults to the origin.
     pub fn center_mass(structure: &mut Structure, target: Option<Point>) {
         let current_com = structure.center_of_mass();
         let target_point = target.unwrap_or(Point::origin());
         let translation = target_point - current_com;
 
-        for atom in structure.iter_atoms_mut() {
-            atom.translate_by(&translation);
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.translate_by(&translation);
+            }
+        });
     }
 
+    /// Rotates the structure about the x-axis by the specified angle.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure to be rotated.
+    /// * `radians` - Rotation angle in radians.
     pub fn rotate_x(structure: &mut Structure, radians: f64) {
         let rotation = Rotation3::from_axis_angle(&Vector3::x_axis(), radians);
         Self::apply_rotation(structure, rotation);
     }
 
+    /// Rotates the structure about the y-axis by the specified angle.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure to be rotated.
+    /// * `radians` - Rotation angle in radians.
     pub fn rotate_y(structure: &mut Structure, radians: f64) {
         let rotation = Rotation3::from_axis_angle(&Vector3::y_axis(), radians);
         Self::apply_rotation(structure, rotation);
     }
 
+    /// Rotates the structure about the z-axis by the specified angle.
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure to be rotated.
+    /// * `radians` - Rotation angle in radians.
     pub fn rotate_z(structure: &mut Structure, radians: f64) {
         let rotation = Rotation3::from_axis_angle(&Vector3::z_axis(), radians);
         Self::apply_rotation(structure, rotation);
     }
 
+    /// Rotates the structure using Euler angles (XYZ convention).
+    ///
+    /// # Arguments
+    ///
+    /// * `structure` - Mutable structure to be rotated.
+    /// * `x_rad` - Rotation about x-axis in radians.
+    /// * `y_rad` - Rotation about y-axis in radians.
+    /// * `z_rad` - Rotation about z-axis in radians.
     pub fn rotate_euler(structure: &mut Structure, x_rad: f64, y_rad: f64, z_rad: f64) {
         let rotation = Rotation3::from_euler_angles(x_rad, y_rad, z_rad);
         Self::apply_rotation(structure, rotation);
     }
 
+    /// Applies a rotation matrix to all atoms and box vectors.
     fn apply_rotation(structure: &mut Structure, rotation: Rotation3<f64>) {
-        for atom in structure.iter_atoms_mut() {
-            atom.pos = rotation * atom.pos;
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.pos = rotation * atom.pos;
+            }
+        });
 
         if let Some(box_vecs) = structure.box_vectors {
             let v1 = Vector3::from(box_vecs[0]);

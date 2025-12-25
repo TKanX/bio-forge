@@ -8,13 +8,15 @@
 
 use crate::db;
 use crate::model::{
+    grid::Grid,
     structure::Structure,
     template::Template,
     topology::{Bond, Topology},
     types::{BondOrder, ResidueCategory, ResiduePosition},
 };
 use crate::ops::error::Error;
-use std::collections::{HashMap, HashSet};
+use crate::utils::parallel::*;
+use std::collections::HashMap;
 
 /// Builder responsible for creating [`Topology`] objects from a [`Structure`].
 ///
@@ -77,110 +79,224 @@ impl TopologyBuilder {
     /// while inter-residue bonds rely on distance checks using the configured
     /// cutoffs.
     ///
+    /// # Arguments
+    ///
+    /// * `structure` - Structure for which to build the bond topology.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the built [`Topology`] or an [`Error`].
+    ///
     /// # Errors
     ///
     /// Returns [`Error`] when a required template or atom is missing.
     pub fn build(self, structure: Structure) -> Result<Topology, Error> {
-        let mut collector = BondCollector::new();
+        let mut chain_offsets = Vec::with_capacity(structure.chain_count());
+        let mut current_offset = 0;
+        for chain in structure.iter_chains() {
+            chain_offsets.push(current_offset);
+            current_offset += chain.atom_count();
+        }
 
-        self.build_intra_residue(&structure, &mut collector)?;
+        assert_eq!(chain_offsets.len(), structure.chain_count());
 
-        self.build_inter_residue(&structure, &mut collector)?;
+        let hetero_templates = &self.hetero_templates;
+        let peptide_cutoff = self.peptide_bond_cutoff;
+        let nucleic_cutoff = self.nucleic_bond_cutoff;
+        let disulfide_cutoff = self.disulfide_bond_cutoff;
 
-        Ok(Topology::new(structure, collector.into_bonds()))
+        let (mut bonds, sulfurs) = structure
+            .par_chains()
+            .zip(chain_offsets)
+            .map(|(chain, chain_start_offset)| {
+                let mut local_bonds = Vec::new();
+                let mut local_sulfurs = Vec::new();
+                let mut residue_offset = chain_start_offset;
+
+                let residues: Vec<_> = chain.iter_residues().collect();
+
+                for (i, residue) in residues.iter().enumerate() {
+                    let atom_count = residue.atom_count();
+
+                    Self::build_intra_residue_for_residue(
+                        residue,
+                        residue_offset,
+                        hetero_templates,
+                        &mut local_bonds,
+                    )?;
+
+                    if i < residues.len() - 1 {
+                        let next_residue = residues[i + 1];
+                        let next_offset = residue_offset + atom_count;
+
+                        Self::build_backbone_bond(
+                            residue,
+                            residue_offset,
+                            next_residue,
+                            next_offset,
+                            peptide_cutoff,
+                            nucleic_cutoff,
+                            &mut local_bonds,
+                        );
+                    }
+
+                    match residue.name.as_str() {
+                        "CYX" | "CYM" => {
+                            if let Some(sg_idx) = residue.iter_atoms().position(|a| a.name == "SG")
+                            {
+                                let sg_pos = residue.atoms()[sg_idx].pos;
+                                local_sulfurs.push((sg_pos, residue_offset + sg_idx));
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    residue_offset += atom_count;
+                }
+
+                Ok((local_bonds, local_sulfurs))
+            })
+            .try_reduce(
+                || (Vec::new(), Vec::new()),
+                |mut a, b| {
+                    a.0.extend(b.0);
+                    a.1.extend(b.1);
+                    Ok(a)
+                },
+            )?;
+
+        if !sulfurs.is_empty() {
+            let grid = Grid::new(
+                sulfurs.iter().map(|(p, i)| (*p, *i)),
+                disulfide_cutoff + 0.5,
+            );
+
+            let disulfide_bonds: Vec<Bond> = sulfurs
+                .par_iter()
+                .flat_map(|(pos, idx1)| {
+                    grid.neighbors(pos, disulfide_cutoff)
+                        .exact()
+                        .filter_map(|idx2| {
+                            if *idx1 < *idx2 {
+                                Some(Bond::new(*idx1, *idx2, BondOrder::Single))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
+            bonds.extend(disulfide_bonds);
+        }
+
+        bonds.par_sort_unstable();
+        bonds.dedup();
+
+        Ok(Topology::new(structure, bonds))
     }
 
-    /// Populates bonds that lie within each residue using templates and
-    /// terminal-specific heuristics.
-    fn build_intra_residue(
-        &self,
-        structure: &Structure,
-        collector: &mut BondCollector,
+    /// Helper to generate intra-residue bonds for a single residue.
+    fn build_intra_residue_for_residue(
+        residue: &crate::model::residue::Residue,
+        offset: usize,
+        hetero_templates: &HashMap<String, Template>,
+        bonds: &mut Vec<Bond>,
     ) -> Result<(), Error> {
-        let mut global_atom_offset = 0;
+        if residue.category == ResidueCategory::Ion {
+            return Ok(());
+        }
 
-        for chain in structure.iter_chains() {
-            for residue in chain.iter_residues() {
-                let atom_count = residue.atom_count();
+        if residue.category == ResidueCategory::Standard {
+            let tmpl_name = &residue.name;
+            let tmpl_view =
+                db::get_template(tmpl_name).ok_or_else(|| Error::MissingInternalTemplate {
+                    res_name: tmpl_name.to_string(),
+                })?;
 
-                if residue.category == ResidueCategory::Ion {
-                    global_atom_offset += atom_count;
-                    continue;
+            for (a1_name, a2_name, order) in tmpl_view.bonds() {
+                Self::try_add_bond(residue, offset, a1_name, a2_name, order, bonds)?;
+            }
+
+            Self::handle_terminal_intra_bonds(residue, offset, bonds)?;
+        } else if residue.category == ResidueCategory::Hetero {
+            let tmpl = hetero_templates.get(residue.name.as_str()).ok_or_else(|| {
+                Error::MissingHeteroTemplate {
+                    res_name: residue.name.to_string(),
                 }
+            })?;
 
-                if residue.category == ResidueCategory::Standard {
-                    let tmpl_name = &residue.name;
-                    let tmpl_view = db::get_template(tmpl_name).ok_or_else(|| {
-                        Error::MissingInternalTemplate {
-                            res_name: tmpl_name.clone(),
-                        }
-                    })?;
-
-                    for (a1_name, a2_name, order) in tmpl_view.bonds() {
-                        self.try_add_bond(
-                            residue,
-                            global_atom_offset,
-                            a1_name,
-                            a2_name,
-                            order,
-                            collector,
-                        )?;
-                    }
-
-                    self.handle_terminal_intra_bonds(residue, global_atom_offset, collector)?;
-                } else if residue.category == ResidueCategory::Hetero {
-                    let tmpl = self.hetero_templates.get(&residue.name).ok_or_else(|| {
-                        Error::MissingHeteroTemplate {
-                            res_name: residue.name.clone(),
-                        }
-                    })?;
-
-                    for (a1_name, a2_name, order) in tmpl.bonds() {
-                        self.try_add_bond(
-                            residue,
-                            global_atom_offset,
-                            a1_name,
-                            a2_name,
-                            *order,
-                            collector,
-                        )?;
-                    }
-                }
-
-                global_atom_offset += atom_count;
+            for (a1_name, a2_name, order) in tmpl.bonds() {
+                Self::try_add_bond(residue, offset, a1_name, a2_name, *order, bonds)?;
             }
         }
+
         Ok(())
+    }
+
+    /// Helper to generate backbone bonds between two residues.
+    fn build_backbone_bond(
+        curr: &crate::model::residue::Residue,
+        curr_offset: usize,
+        next: &crate::model::residue::Residue,
+        next_offset: usize,
+        peptide_cutoff: f64,
+        nucleic_cutoff: f64,
+        bonds: &mut Vec<Bond>,
+    ) {
+        if curr.category != ResidueCategory::Standard || next.category != ResidueCategory::Standard
+        {
+            return;
+        }
+
+        if let (Some(std1), Some(std2)) = (curr.standard_name, next.standard_name) {
+            if std1.is_protein() && std2.is_protein() {
+                Self::connect_atoms_if_close(
+                    AtomLocator::new(curr, curr_offset, "C"),
+                    AtomLocator::new(next, next_offset, "N"),
+                    peptide_cutoff,
+                    BondOrder::Single,
+                    bonds,
+                );
+            } else if std1.is_nucleic() && std2.is_nucleic() {
+                Self::connect_atoms_if_close(
+                    AtomLocator::new(curr, curr_offset, "O3'"),
+                    AtomLocator::new(next, next_offset, "P"),
+                    nucleic_cutoff,
+                    BondOrder::Single,
+                    bonds,
+                );
+            }
+        }
     }
 
     /// Attempts to add a bond and reports informative errors when atoms are
     /// missing.
     fn try_add_bond(
-        &self,
         residue: &crate::model::residue::Residue,
         offset: usize,
         name1: &str,
         name2: &str,
         order: BondOrder,
-        collector: &mut BondCollector,
+        bonds: &mut Vec<Bond>,
     ) -> Result<(), Error> {
         let idx1 = residue.iter_atoms().position(|a| a.name == name1);
         let idx2 = residue.iter_atoms().position(|a| a.name == name2);
 
         match (idx1, idx2) {
             (Some(i1), Some(i2)) => {
-                collector.insert(offset + i1, offset + i2, order);
+                bonds.push(Bond::new(offset + i1, offset + i2, order));
                 Ok(())
             }
-            (None, _) if self.is_optional_terminal_atom(residue, name1) => Ok(()),
-            (_, None) if self.is_optional_terminal_atom(residue, name2) => Ok(()),
+            (None, _) if Self::is_optional_terminal_atom(residue, name1) => Ok(()),
+            (_, None) if Self::is_optional_terminal_atom(residue, name2) => Ok(()),
             (None, _) => Err(Error::topology_atom_missing(
-                &residue.name,
+                &*residue.name,
                 residue.id,
                 name1,
             )),
             (_, None) => Err(Error::topology_atom_missing(
-                &residue.name,
+                &*residue.name,
                 residue.id,
                 name2,
             )),
@@ -189,7 +305,6 @@ impl TopologyBuilder {
 
     /// Returns whether the provided atom is optional for the residue position.
     fn is_optional_terminal_atom(
-        &self,
         residue: &crate::model::residue::Residue,
         atom_name: &str,
     ) -> bool {
@@ -217,10 +332,9 @@ impl TopologyBuilder {
     /// Adds missing bonds for termini (protein and nucleic acid) that are not
     /// explicitly listed in templates.
     fn handle_terminal_intra_bonds(
-        &self,
         residue: &crate::model::residue::Residue,
         offset: usize,
-        collector: &mut BondCollector,
+        bonds: &mut Vec<Bond>,
     ) -> Result<(), Error> {
         if residue.position == ResiduePosition::NTerminal
             && residue.standard_name.is_some_and(|s| s.is_protein())
@@ -230,7 +344,7 @@ impl TopologyBuilder {
                     residue.iter_atoms().position(|a| a.name == h_name),
                     residue.iter_atoms().position(|a| a.name == "N"),
                 ) {
-                    collector.insert(offset + h_idx, offset + n_idx, BondOrder::Single);
+                    bonds.push(Bond::new(offset + h_idx, offset + n_idx, BondOrder::Single));
                 }
             }
         }
@@ -242,11 +356,19 @@ impl TopologyBuilder {
             let oxt_idx = residue.iter_atoms().position(|a| a.name == "OXT");
 
             if let (Some(c_idx), Some(oxt_idx)) = (c_idx, oxt_idx) {
-                collector.insert(offset + c_idx, offset + oxt_idx, BondOrder::Single);
+                bonds.push(Bond::new(
+                    offset + c_idx,
+                    offset + oxt_idx,
+                    BondOrder::Single,
+                ));
 
                 for h_name in ["HXT", "HOXT"] {
                     if let Some(h_idx) = residue.iter_atoms().position(|a| a.name == h_name) {
-                        collector.insert(offset + oxt_idx, offset + h_idx, BondOrder::Single);
+                        bonds.push(Bond::new(
+                            offset + oxt_idx,
+                            offset + h_idx,
+                            BondOrder::Single,
+                        ));
                     }
                 }
             }
@@ -259,10 +381,18 @@ impl TopologyBuilder {
                 residue.iter_atoms().position(|a| a.name == "P"),
                 residue.iter_atoms().position(|a| a.name == "OP3"),
             ) {
-                collector.insert(offset + p_idx, offset + op3_idx, BondOrder::Single);
+                bonds.push(Bond::new(
+                    offset + p_idx,
+                    offset + op3_idx,
+                    BondOrder::Single,
+                ));
 
                 if let Some(hop3_idx) = residue.iter_atoms().position(|a| a.name == "HOP3") {
-                    collector.insert(offset + op3_idx, offset + hop3_idx, BondOrder::Single);
+                    bonds.push(Bond::new(
+                        offset + op3_idx,
+                        offset + hop3_idx,
+                        BondOrder::Single,
+                    ));
                 }
             }
 
@@ -270,7 +400,11 @@ impl TopologyBuilder {
                 residue.iter_atoms().position(|a| a.name == "HO5'"),
                 residue.iter_atoms().position(|a| a.name == "O5'"),
             ) {
-                collector.insert(offset + ho5_idx, offset + o5_idx, BondOrder::Single);
+                bonds.push(Bond::new(
+                    offset + ho5_idx,
+                    offset + o5_idx,
+                    BondOrder::Single,
+                ));
             }
         }
 
@@ -281,99 +415,7 @@ impl TopologyBuilder {
             let o3_idx = residue.iter_atoms().position(|a| a.name == "O3'");
 
             if let (Some(h_idx), Some(o_idx)) = (ho3_idx, o3_idx) {
-                collector.insert(offset + h_idx, offset + o_idx, BondOrder::Single);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Connects adjacent residues through peptide, nucleic-backbone, and
-    /// disulfide bonds based on geometry.
-    fn build_inter_residue(
-        &self,
-        structure: &Structure,
-        collector: &mut BondCollector,
-    ) -> Result<(), Error> {
-        let mut residue_offsets: Vec<Vec<usize>> = Vec::new();
-        let mut current_offset = 0;
-
-        for chain in structure.iter_chains() {
-            let mut chain_offsets = Vec::new();
-            for residue in chain.iter_residues() {
-                chain_offsets.push(current_offset);
-                current_offset += residue.atom_count();
-            }
-            residue_offsets.push(chain_offsets);
-        }
-
-        for (c_idx, chain) in structure.iter_chains().enumerate() {
-            let residues: Vec<_> = chain.iter_residues().collect();
-            if residues.len() < 2 {
-                continue;
-            }
-
-            for i in 0..residues.len() - 1 {
-                let curr = residues[i];
-                let next = residues[i + 1];
-
-                if curr.category != ResidueCategory::Standard
-                    || next.category != ResidueCategory::Standard
-                {
-                    continue;
-                }
-
-                let curr_offset = residue_offsets[c_idx][i];
-                let next_offset = residue_offsets[c_idx][i + 1];
-
-                if let (Some(std1), Some(std2)) = (curr.standard_name, next.standard_name) {
-                    if std1.is_protein() && std2.is_protein() {
-                        self.connect_atoms_if_close(
-                            AtomLocator::new(curr, curr_offset, "C"),
-                            AtomLocator::new(next, next_offset, "N"),
-                            self.peptide_bond_cutoff,
-                            BondOrder::Single,
-                            collector,
-                        );
-                    } else if std1.is_nucleic() && std2.is_nucleic() {
-                        self.connect_atoms_if_close(
-                            AtomLocator::new(curr, curr_offset, "O3'"),
-                            AtomLocator::new(next, next_offset, "P"),
-                            self.nucleic_bond_cutoff,
-                            BondOrder::Single,
-                            collector,
-                        );
-                    }
-                }
-            }
-        }
-
-        let mut sulfur_atoms = Vec::new();
-
-        for (c_idx, chain) in structure.iter_chains().enumerate() {
-            for (r_idx, residue) in chain.iter_residues().enumerate() {
-                match residue.name.as_str() {
-                    "CYX" | "CYM" => {
-                        if let Some(sg) = residue.atom("SG") {
-                            let offset = residue_offsets[c_idx][r_idx]
-                                + residue.iter_atoms().position(|a| a.name == "SG").unwrap();
-                            sulfur_atoms.push((offset, sg.pos));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let cutoff_sq = self.disulfide_bond_cutoff * self.disulfide_bond_cutoff;
-        for i in 0..sulfur_atoms.len() {
-            for j in (i + 1)..sulfur_atoms.len() {
-                let (idx1, pos1) = sulfur_atoms[i];
-                let (idx2, pos2) = sulfur_atoms[j];
-
-                if nalgebra::distance_squared(&pos1, &pos2) <= cutoff_sq {
-                    collector.insert(idx1, idx2, BondOrder::Single);
-                }
+                bonds.push(Bond::new(offset + h_idx, offset + o_idx, BondOrder::Single));
             }
         }
 
@@ -382,12 +424,11 @@ impl TopologyBuilder {
 
     /// Adds a bond when the specified atoms are within the provided cutoff.
     fn connect_atoms_if_close(
-        &self,
         first: AtomLocator<'_>,
         second: AtomLocator<'_>,
         cutoff: f64,
         order: BondOrder,
-        collector: &mut BondCollector,
+        bonds: &mut Vec<Bond>,
     ) {
         if let (Some(idx1), Some(idx2)) = (
             first
@@ -403,37 +444,9 @@ impl TopologyBuilder {
             let p2 = second.residue.atoms()[idx2].pos;
 
             if nalgebra::distance_squared(&p1, &p2) <= cutoff * cutoff {
-                collector.insert(first.offset + idx1, second.offset + idx2, order);
+                bonds.push(Bond::new(first.offset + idx1, second.offset + idx2, order));
             }
         }
-    }
-}
-
-/// Collects bonds while enforcing uniqueness across all assembly phases.
-struct BondCollector {
-    bonds: Vec<Bond>,
-    seen: HashSet<(usize, usize, BondOrder)>,
-}
-
-impl BondCollector {
-    fn new() -> Self {
-        Self {
-            bonds: Vec::new(),
-            seen: HashSet::new(),
-        }
-    }
-
-    fn insert(&mut self, idx1: usize, idx2: usize, order: BondOrder) {
-        let bond = Bond::new(idx1, idx2, order);
-        let key = (bond.a1_idx, bond.a2_idx, bond.order);
-
-        if self.seen.insert(key) {
-            self.bonds.push(bond);
-        }
-    }
-
-    fn into_bonds(self) -> Vec<Bond> {
-        self.bonds
     }
 }
 
@@ -816,18 +829,44 @@ mod tests {
     #[test]
     fn optional_terminal_atoms_includes_nucleic_5prime_special_atoms() {
         let residue_with_p = five_prime_residue_with_phosphate_and_op3(1);
-        let builder = TopologyBuilder::new();
 
-        assert!(builder.is_optional_terminal_atom(&residue_with_p, "OP3"));
-        assert!(builder.is_optional_terminal_atom(&residue_with_p, "HOP3"));
-        assert!(builder.is_optional_terminal_atom(&residue_with_p, "HOP2"));
-        assert!(!builder.is_optional_terminal_atom(&residue_with_p, "P"));
-        assert!(!builder.is_optional_terminal_atom(&residue_with_p, "OP1"));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "OP3"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "HOP3"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "HOP2"
+        ));
+        assert!(!TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "P"
+        ));
+        assert!(!TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "OP1"
+        ));
 
         let residue_no_p = five_prime_residue_without_phosphate(2);
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "P"));
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "OP1"));
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "OP2"));
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "HO5'"));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "P"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "OP1"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "OP2"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "HO5'"
+        ));
     }
 }

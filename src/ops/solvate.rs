@@ -8,16 +8,17 @@ use crate::db;
 use crate::model::{
     atom::Atom,
     chain::Chain,
+    grid::Grid,
     residue::Residue,
     structure::Structure,
     types::{Element, Point, ResidueCategory, StandardResidue},
 };
 use crate::ops::error::Error;
+use crate::utils::parallel::*;
 use nalgebra::{Rotation3, Vector3};
 use rand::rngs::StdRng;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{Rng, SeedableRng};
-use std::collections::HashMap;
 
 /// Supported cation species for ionic replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -225,10 +226,14 @@ pub fn solvate_structure(structure: &mut Structure, config: &SolvateConfig) -> R
 
     translate_structure(structure, &translation);
 
-    let grid = SpatialGrid::new(structure, 4.0);
+    let heavy_atoms: Vec<_> = structure
+        .par_atoms()
+        .filter(|a| a.element != Element::H)
+        .map(|a| (a.pos, ()))
+        .collect();
+    let grid = Grid::new(heavy_atoms, 4.0);
 
     let mut solvent_chain = Chain::new(&solvent_chain_id);
-    let mut water_positions = Vec::new();
 
     let water_tmpl = db::get_template("HOH").ok_or(Error::MissingInternalTemplate {
         res_name: "HOH".to_string(),
@@ -242,52 +247,82 @@ pub fn solvate_structure(structure: &mut Structure, config: &SolvateConfig) -> R
         .map(|(_, _, p)| p)
         .unwrap_or(Point::origin());
 
-    let mut z = config.water_spacing / 2.0;
+    let z_steps = (0..((box_dim.z / config.water_spacing).ceil() as usize)).collect::<Vec<_>>();
+    let base_seed = config.rng_seed.unwrap_or_else(rand::random);
+
+    let new_waters: Vec<Residue> = z_steps
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, z_idx)| {
+            let mut local_rng = StdRng::seed_from_u64(base_seed.wrapping_add(i as u64));
+            let mut local_waters = Vec::new();
+            let z = (z_idx as f64 * config.water_spacing) + (config.water_spacing / 2.0);
+
+            if z >= box_dim.z {
+                return local_waters;
+            }
+
+            let mut y = config.water_spacing / 2.0;
+            while y < box_dim.y {
+                let mut x = config.water_spacing / 2.0;
+                while x < box_dim.x {
+                    let candidate_pos = Point::new(x, y, z);
+
+                    if grid
+                        .neighbors(&candidate_pos, config.vdw_cutoff)
+                        .exact()
+                        .next()
+                        .is_none()
+                    {
+                        let rotation = Rotation3::from_axis_angle(
+                            &Vector3::y_axis(),
+                            local_rng.random_range(0.0..std::f64::consts::TAU),
+                        ) * Rotation3::from_axis_angle(
+                            &Vector3::x_axis(),
+                            local_rng.random_range(0.0..std::f64::consts::TAU),
+                        );
+
+                        let mut residue = Residue::new(
+                            0,
+                            None,
+                            water_name,
+                            Some(water_standard),
+                            ResidueCategory::Standard,
+                        );
+
+                        let final_o_pos = candidate_pos;
+                        residue.add_atom(Atom::new("O", Element::O, final_o_pos));
+
+                        for (h_name, h_pos, _) in water_tmpl.hydrogens() {
+                            let local_vec = h_pos - tmpl_o_pos;
+                            let rotated_vec = rotation * local_vec;
+                            residue.add_atom(Atom::new(
+                                h_name,
+                                Element::H,
+                                final_o_pos + rotated_vec,
+                            ));
+                        }
+
+                        local_waters.push(residue);
+                    }
+                    x += config.water_spacing;
+                }
+                y += config.water_spacing;
+            }
+            local_waters
+        })
+        .flatten()
+        .collect();
+
+    let mut water_positions = Vec::with_capacity(new_waters.len());
+    solvent_chain.reserve(new_waters.len());
     let mut res_id_counter = 1;
 
-    while z < box_dim.z {
-        let mut y = config.water_spacing / 2.0;
-        while y < box_dim.y {
-            let mut x = config.water_spacing / 2.0;
-            while x < box_dim.x {
-                let candidate_pos = Point::new(x, y, z);
-
-                if !grid.has_clash(&candidate_pos, config.vdw_cutoff) {
-                    let rotation = Rotation3::from_axis_angle(
-                        &Vector3::y_axis(),
-                        rng.random_range(0.0..std::f64::consts::TAU),
-                    ) * Rotation3::from_axis_angle(
-                        &Vector3::x_axis(),
-                        rng.random_range(0.0..std::f64::consts::TAU),
-                    );
-
-                    let mut residue = Residue::new(
-                        res_id_counter,
-                        None,
-                        water_name,
-                        Some(water_standard),
-                        ResidueCategory::Standard,
-                    );
-
-                    let final_o_pos = candidate_pos;
-                    residue.add_atom(Atom::new("O", Element::O, final_o_pos));
-
-                    for (h_name, h_pos, _) in water_tmpl.hydrogens() {
-                        let local_vec = h_pos - tmpl_o_pos;
-                        let rotated_vec = rotation * local_vec;
-                        residue.add_atom(Atom::new(h_name, Element::H, final_o_pos + rotated_vec));
-                    }
-
-                    solvent_chain.add_residue(residue);
-                    water_positions.push(res_id_counter);
-                    res_id_counter += 1;
-                }
-
-                x += config.water_spacing;
-            }
-            y += config.water_spacing;
-        }
-        z += config.water_spacing;
+    for mut residue in new_waters {
+        residue.id = res_id_counter;
+        solvent_chain.add_residue(residue);
+        water_positions.push(res_id_counter);
+        res_id_counter += 1;
     }
 
     replace_with_ions(
@@ -524,80 +559,6 @@ fn next_solvent_chain_id(structure: &Structure) -> String {
             return candidate;
         }
         index += 1;
-    }
-}
-
-/// Sparse spatial hash used to reject candidate water positions via clash checks.
-struct SpatialGrid {
-    cell_size: f64,
-    cells: HashMap<(isize, isize, isize), Vec<Point>>,
-}
-
-impl SpatialGrid {
-    /// Builds the grid from existing heavy atoms in the structure.
-    ///
-    /// # Arguments
-    ///
-    /// * `structure` - Structure providing the atom positions.
-    /// * `cell_size` - Edge length (Å) for each spatial bin.
-    fn new(structure: &Structure, cell_size: f64) -> Self {
-        let mut cells: HashMap<(isize, isize, isize), Vec<Point>> = HashMap::new();
-
-        for atom in structure.iter_atoms() {
-            if atom.element == Element::H {
-                continue;
-            }
-
-            let idx = Self::get_index(atom.pos, cell_size);
-            cells.entry(idx).or_default().push(atom.pos);
-        }
-
-        Self { cell_size, cells }
-    }
-
-    /// Computes the cell index for a position.
-    ///
-    /// # Arguments
-    ///
-    /// * `pos` - Coordinate being binned.
-    /// * `size` - Cell size used when building the grid.
-    fn get_index(pos: Point, size: f64) -> (isize, isize, isize) {
-        (
-            (pos.x / size).floor() as isize,
-            (pos.y / size).floor() as isize,
-            (pos.z / size).floor() as isize,
-        )
-    }
-
-    /// Tests whether placing a water at the given point would violate the cutoff.
-    ///
-    /// # Arguments
-    ///
-    /// * `pos` - Candidate water position.
-    /// * `cutoff` - Minimum allowed heavy-atom distance.
-    ///
-    /// # Returns
-    ///
-    /// `true` when any stored heavy atom is closer than the cutoff.
-    fn has_clash(&self, pos: &Point, cutoff: f64) -> bool {
-        let center_idx = Self::get_index(*pos, self.cell_size);
-        let cutoff_sq = cutoff * cutoff;
-
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
-                    let idx = (center_idx.0 + dx, center_idx.1 + dy, center_idx.2 + dz);
-                    if let Some(atoms) = self.cells.get(&idx) {
-                        for atom_pos in atoms {
-                            if nalgebra::distance_squared(pos, atom_pos) < cutoff_sq {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        false
     }
 }
 
