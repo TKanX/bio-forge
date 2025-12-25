@@ -612,6 +612,50 @@ mod tests {
     }
 
     #[test]
+    fn residue_par_atoms_iterates_correctly() {
+        use crate::utils::parallel::ParallelIterator;
+
+        let mut residue = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        let atom1 = Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0));
+        let atom2 = Atom::new("CB", Element::C, Point::new(1.0, 0.0, 0.0));
+        residue.add_atom(atom1);
+        residue.add_atom(atom2);
+
+        let count = residue.par_atoms().count();
+        assert_eq!(count, 2);
+
+        let names: Vec<String> = residue.par_atoms().map(|a| a.name.to_string()).collect();
+        assert_eq!(names, vec!["CA", "CB"]);
+    }
+
+    #[test]
+    fn residue_par_atoms_mut_iterates_correctly() {
+        use crate::utils::parallel::ParallelIterator;
+
+        let mut residue = Residue::new(
+            1,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        let atom1 = Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0));
+        residue.add_atom(atom1);
+
+        residue.par_atoms_mut().for_each(|atom| {
+            atom.translate_by(&nalgebra::Vector3::new(1.0, 0.0, 0.0));
+        });
+
+        assert!((residue.atom("CA").unwrap().pos.x - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
     fn residue_strip_hydrogens_removes_hydrogen_atoms() {
         let mut residue = Residue::new(
             1,
