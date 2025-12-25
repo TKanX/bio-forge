@@ -8,7 +8,7 @@
 #[cfg(feature = "parallel")]
 pub use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-    IntoParallelRefMutIterator, ParallelBridge, ParallelIterator,
+    IntoParallelRefMutIterator, ParallelBridge, ParallelIterator, ParallelSliceMut,
 };
 
 #[cfg(not(feature = "parallel"))]
@@ -78,6 +78,24 @@ mod fallback {
     impl<T: Iterator> ParallelBridge for T {
         fn par_bridge(self) -> Self {
             self
+        }
+    }
+
+    /// Shim trait to allow `par_sort_unstable_by_key` on slices.
+    pub trait ParallelSliceMut<T> {
+        fn par_sort_unstable_by_key<K, F>(&mut self, f: F)
+        where
+            K: Ord,
+            F: Fn(&T) -> K;
+    }
+
+    impl<T> ParallelSliceMut<T> for [T] {
+        fn par_sort_unstable_by_key<K, F>(&mut self, f: F)
+        where
+            K: Ord,
+            F: Fn(&T) -> K,
+        {
+            self.sort_unstable_by_key(f)
         }
     }
 }
