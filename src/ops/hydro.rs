@@ -964,13 +964,35 @@ mod tests {
             ..HydroConfig::default()
         };
         assert_eq!(
-            determine_protonation_state(&structure, 0, 0, &config),
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &config,
+                None,
+                None
+            ),
             Some("ASH".to_string())
         );
 
         config.target_ph = Some(5.0);
         assert_eq!(
-            determine_protonation_state(&structure, 0, 0, &config),
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &config,
+                None,
+                None
+            ),
             Some("ASP".to_string())
         );
 
@@ -978,13 +1000,35 @@ mod tests {
             structure_with_residue(residue_from_template("LYS", StandardResidue::LYS, 2));
         config.target_ph = Some(11.0);
         assert_eq!(
-            determine_protonation_state(&structure, 0, 0, &config),
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &config,
+                None,
+                None
+            ),
             Some("LYN".to_string())
         );
 
         config.target_ph = Some(7.0);
         assert_eq!(
-            determine_protonation_state(&structure, 0, 0, &config),
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &config,
+                None,
+                None
+            ),
             Some("LYS".to_string())
         );
     }
@@ -1002,14 +1046,36 @@ mod tests {
         };
 
         assert_eq!(
-            determine_protonation_state(&structure, 0, 0, &config),
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &config,
+                None,
+                None
+            ),
             Some("HIE".to_string())
         );
 
         let mut acid_config = HydroConfig::default();
         acid_config.target_ph = Some(5.5);
         assert_eq!(
-            determine_protonation_state(&structure, 0, 0, &acid_config),
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &acid_config,
+                None,
+                None
+            ),
             Some("HIP".to_string())
         );
     }
@@ -1074,7 +1140,21 @@ mod tests {
         let mut config = HydroConfig::default();
         config.target_ph = Some(9.0);
 
-        assert_eq!(determine_protonation_state(&structure, 0, 0, &config), None);
+        assert_eq!(
+            determine_protonation_state(
+                structure
+                    .iter_chains()
+                    .next()
+                    .unwrap()
+                    .iter_residues()
+                    .next()
+                    .unwrap(),
+                &config,
+                None,
+                None
+            ),
+            None
+        );
     }
 
     #[test]
