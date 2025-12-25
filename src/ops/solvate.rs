@@ -14,6 +14,7 @@ use crate::model::{
     types::{Element, Point, ResidueCategory, StandardResidue},
 };
 use crate::ops::error::Error;
+use crate::utils::parallel::*;
 use nalgebra::{Rotation3, Vector3};
 use rand::rngs::StdRng;
 use rand::seq::{IndexedRandom, SliceRandom};
@@ -225,14 +226,14 @@ pub fn solvate_structure(structure: &mut Structure, config: &SolvateConfig) -> R
 
     translate_structure(structure, &translation);
 
-    let heavy_atoms = structure
-        .iter_atoms()
+    let heavy_atoms: Vec<_> = structure
+        .par_atoms()
         .filter(|a| a.element != Element::H)
-        .map(|a| (a.pos, ()));
+        .map(|a| (a.pos, ()))
+        .collect();
     let grid = Grid::new(heavy_atoms, 4.0);
 
     let mut solvent_chain = Chain::new(&solvent_chain_id);
-    let mut water_positions = Vec::new();
 
     let water_tmpl = db::get_template("HOH").ok_or(Error::MissingInternalTemplate {
         res_name: "HOH".to_string(),
@@ -246,57 +247,82 @@ pub fn solvate_structure(structure: &mut Structure, config: &SolvateConfig) -> R
         .map(|(_, _, p)| p)
         .unwrap_or(Point::origin());
 
-    let mut z = config.water_spacing / 2.0;
+    let z_steps = (0..((box_dim.z / config.water_spacing).ceil() as usize)).collect::<Vec<_>>();
+    let base_seed = config.rng_seed.unwrap_or_else(rand::random);
+
+    let new_waters: Vec<Residue> = z_steps
+        .into_par_iter()
+        .enumerate()
+        .map(|(i, z_idx)| {
+            let mut local_rng = StdRng::seed_from_u64(base_seed.wrapping_add(i as u64));
+            let mut local_waters = Vec::new();
+            let z = (z_idx as f64 * config.water_spacing) + (config.water_spacing / 2.0);
+
+            if z >= box_dim.z {
+                return local_waters;
+            }
+
+            let mut y = config.water_spacing / 2.0;
+            while y < box_dim.y {
+                let mut x = config.water_spacing / 2.0;
+                while x < box_dim.x {
+                    let candidate_pos = Point::new(x, y, z);
+
+                    if grid
+                        .neighbors(&candidate_pos, config.vdw_cutoff)
+                        .exact()
+                        .next()
+                        .is_none()
+                    {
+                        let rotation = Rotation3::from_axis_angle(
+                            &Vector3::y_axis(),
+                            local_rng.random_range(0.0..std::f64::consts::TAU),
+                        ) * Rotation3::from_axis_angle(
+                            &Vector3::x_axis(),
+                            local_rng.random_range(0.0..std::f64::consts::TAU),
+                        );
+
+                        let mut residue = Residue::new(
+                            0,
+                            None,
+                            water_name,
+                            Some(water_standard),
+                            ResidueCategory::Standard,
+                        );
+
+                        let final_o_pos = candidate_pos;
+                        residue.add_atom(Atom::new("O", Element::O, final_o_pos));
+
+                        for (h_name, h_pos, _) in water_tmpl.hydrogens() {
+                            let local_vec = h_pos - tmpl_o_pos;
+                            let rotated_vec = rotation * local_vec;
+                            residue.add_atom(Atom::new(
+                                h_name,
+                                Element::H,
+                                final_o_pos + rotated_vec,
+                            ));
+                        }
+
+                        local_waters.push(residue);
+                    }
+                    x += config.water_spacing;
+                }
+                y += config.water_spacing;
+            }
+            local_waters
+        })
+        .flatten()
+        .collect();
+
+    let mut water_positions = Vec::with_capacity(new_waters.len());
+    solvent_chain.reserve(new_waters.len());
     let mut res_id_counter = 1;
 
-    while z < box_dim.z {
-        let mut y = config.water_spacing / 2.0;
-        while y < box_dim.y {
-            let mut x = config.water_spacing / 2.0;
-            while x < box_dim.x {
-                let candidate_pos = Point::new(x, y, z);
-
-                if grid
-                    .neighbors(&candidate_pos, config.vdw_cutoff)
-                    .exact()
-                    .next()
-                    .is_none()
-                {
-                    let rotation = Rotation3::from_axis_angle(
-                        &Vector3::y_axis(),
-                        rng.random_range(0.0..std::f64::consts::TAU),
-                    ) * Rotation3::from_axis_angle(
-                        &Vector3::x_axis(),
-                        rng.random_range(0.0..std::f64::consts::TAU),
-                    );
-
-                    let mut residue = Residue::new(
-                        res_id_counter,
-                        None,
-                        water_name,
-                        Some(water_standard),
-                        ResidueCategory::Standard,
-                    );
-
-                    let final_o_pos = candidate_pos;
-                    residue.add_atom(Atom::new("O", Element::O, final_o_pos));
-
-                    for (h_name, h_pos, _) in water_tmpl.hydrogens() {
-                        let local_vec = h_pos - tmpl_o_pos;
-                        let rotated_vec = rotation * local_vec;
-                        residue.add_atom(Atom::new(h_name, Element::H, final_o_pos + rotated_vec));
-                    }
-
-                    solvent_chain.add_residue(residue);
-                    water_positions.push(res_id_counter);
-                    res_id_counter += 1;
-                }
-
-                x += config.water_spacing;
-            }
-            y += config.water_spacing;
-        }
-        z += config.water_spacing;
+    for mut residue in new_waters {
+        residue.id = res_id_counter;
+        solvent_chain.add_residue(residue);
+        water_positions.push(res_id_counter);
+        res_id_counter += 1;
     }
 
     replace_with_ions(
