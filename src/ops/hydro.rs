@@ -13,6 +13,7 @@ use crate::model::{
     types::{Element, Point, ResidueCategory, ResiduePosition, StandardResidue},
 };
 use crate::ops::error::Error;
+use crate::utils::parallel::*;
 use nalgebra::{Matrix3, Rotation3, Vector3};
 use rand::Rng;
 use std::collections::HashSet;
@@ -85,35 +86,72 @@ pub enum HisStrategy {
 /// Returns [`Error::MissingInternalTemplate`] when no template is found or
 /// [`Error::IncompleteResidueForHydro`] when required anchor atoms are missing.
 pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<(), Error> {
-    let mut targets = Vec::new();
-    for (c_idx, chain) in structure.iter_chains().enumerate() {
-        for (r_idx, residue) in chain.iter_residues().enumerate() {
-            if residue.category == ResidueCategory::Standard {
-                targets.push((c_idx, r_idx));
-            }
-        }
-    }
-
     mark_disulfide_bridges(structure);
 
-    for (c_idx, r_idx) in targets {
-        let new_name = determine_protonation_state(structure, c_idx, r_idx, config);
+    let acceptor_grid = if config.his_strategy == HisStrategy::HbNetwork {
+        Some(build_acceptor_grid(structure))
+    } else {
+        None
+    };
 
-        let chain = structure.iter_chains_mut().nth(c_idx).unwrap();
-        let residue = chain.iter_residues_mut().nth(r_idx).unwrap();
+    structure
+        .par_chains_mut()
+        .enumerate()
+        .try_for_each(|(c_idx, chain)| {
+            chain
+                .par_residues_mut()
+                .enumerate()
+                .try_for_each(|(r_idx, residue)| {
+                    if residue.category != ResidueCategory::Standard {
+                        return Ok(());
+                    }
 
-        if let Some(name) = new_name {
-            residue.name = name.into();
-        }
+                    let new_name = determine_protonation_state(
+                        residue,
+                        config,
+                        acceptor_grid.as_ref(),
+                        Some((c_idx, r_idx)),
+                    );
 
-        if config.remove_existing_h {
-            residue.strip_hydrogens();
-        }
+                    if let Some(name) = new_name {
+                        residue.name = name.into();
+                    }
 
-        construct_hydrogens_for_residue(residue, config)?;
-    }
+                    if config.remove_existing_h {
+                        residue.strip_hydrogens();
+                    }
 
-    Ok(())
+                    construct_hydrogens_for_residue(residue, config)
+                })
+        })
+}
+
+/// Builds a spatial grid of all nitrogen and oxygen atoms in the structure.
+///
+/// # Arguments
+///
+/// * `structure` - Structure from which to extract acceptor atoms.
+///
+/// # Returns
+///
+/// A `Grid` containing positions and residue indices of N and O atoms.
+fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
+    let atoms: Vec<(Point, (usize, usize))> = structure
+        .iter_chains()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .iter_residues()
+                .enumerate()
+                .flat_map(move |(r_idx, residue)| {
+                    residue
+                        .iter_atoms()
+                        .filter(|a| matches!(a.element, Element::N | Element::O))
+                        .map(move |a| (a.pos, (c_idx, r_idx)))
+                })
+        })
+        .collect();
+    Grid::new(atoms, 3.5)
 }
 
 /// Predicts the protonation-induced residue rename for a given polymer residue.
@@ -123,22 +161,20 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
 ///
 /// # Arguments
 ///
-/// * `structure` - Structure providing context for hydrogen-bond analysis.
-/// * `c_idx` - Chain index of the residue under evaluation.
-/// * `r_idx` - Residue index within the chain.
+/// * `residue` - Residue under evaluation.
 /// * `config` - Hydrogenation configuration containing pH and histidine options.
+/// * `grid` - Optional grid of acceptor atoms for HIS network analysis.
+/// * `indices` - Optional (chain_idx, res_idx) to exclude self-interactions.
 ///
 /// # Returns
 ///
 /// `Some(new_name)` when the residue should be relabeled; otherwise `None`.
 fn determine_protonation_state(
-    structure: &Structure,
-    c_idx: usize,
-    r_idx: usize,
+    residue: &Residue,
     config: &HydroConfig,
+    grid: Option<&Grid<(usize, usize)>>,
+    indices: Option<(usize, usize)>,
 ) -> Option<String> {
-    let chain = structure.iter_chains().nth(c_idx)?;
-    let residue = chain.iter_residues().nth(r_idx)?;
     let std = residue.standard_name?;
 
     if std == StandardResidue::CYS && residue.name == "CYX" {
@@ -181,7 +217,12 @@ fn determine_protonation_state(
                 if ph < 6.0 {
                     Some("HIP".to_string())
                 } else {
-                    Some(select_neutral_his(structure, residue, &config.his_strategy))
+                    Some(select_neutral_his(
+                        residue,
+                        config.his_strategy,
+                        grid,
+                        indices,
+                    ))
                 }
             }
             _ => None,
@@ -190,7 +231,12 @@ fn determine_protonation_state(
 
     if std == StandardResidue::HIS && matches!(residue.name.as_str(), "HIS" | "HID" | "HIE" | "HIP")
     {
-        return Some(select_neutral_his(structure, residue, &config.his_strategy));
+        return Some(select_neutral_his(
+            residue,
+            config.his_strategy,
+            grid,
+            indices,
+        ));
     }
 
     None
@@ -202,60 +248,82 @@ fn determine_protonation_state(
 ///
 /// * `structure` - Mutable structure containing residues to scan and relabel.
 fn mark_disulfide_bridges(structure: &mut Structure) {
-    let mut cys_sulfurs = Vec::new();
-    for (c_idx, chain) in structure.iter_chains().enumerate() {
-        for (r_idx, residue) in chain.iter_residues().enumerate() {
-            if let (true, Some(sg)) = (
-                matches!(residue.standard_name, Some(StandardResidue::CYS)),
-                residue.atom("SG"),
-            ) {
-                cys_sulfurs.push((sg.pos, (c_idx, r_idx)));
-            }
-        }
-    }
+    let cys_sulfurs: Vec<(Point, (usize, usize))> = structure
+        .par_chains_mut()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .par_residues_mut()
+                .enumerate()
+                .filter_map(move |(r_idx, residue)| {
+                    if matches!(residue.standard_name, Some(StandardResidue::CYS)) {
+                        residue.atom("SG").map(|sg| (sg.pos, (c_idx, r_idx)))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
 
     if cys_sulfurs.len() < 2 {
         return;
     }
 
     let grid = Grid::new(cys_sulfurs.clone(), DISULFIDE_SG_THRESHOLD + 0.5);
-    let mut disulfide_residues: HashSet<(usize, usize)> = HashSet::new();
 
-    for (pos, (c_idx, r_idx)) in &cys_sulfurs {
-        for &(neighbor_c, neighbor_r) in grid.neighbors(pos, DISULFIDE_SG_THRESHOLD).exact() {
-            if *c_idx == neighbor_c && *r_idx == neighbor_r {
-                continue;
-            }
-            disulfide_residues.insert((*c_idx, *r_idx));
-            disulfide_residues.insert((neighbor_c, neighbor_r));
-        }
-    }
+    let disulfide_residues: HashSet<(usize, usize)> = cys_sulfurs
+        .par_iter()
+        .flat_map_iter(|(pos, (c_idx, r_idx))| {
+            grid.neighbors(pos, DISULFIDE_SG_THRESHOLD)
+                .exact()
+                .filter_map(move |&(neighbor_c, neighbor_r)| {
+                    if *c_idx == neighbor_c && *r_idx == neighbor_r {
+                        None
+                    } else {
+                        Some([(*c_idx, *r_idx), (neighbor_c, neighbor_r)])
+                    }
+                })
+        })
+        .flatten()
+        .collect();
 
     if disulfide_residues.is_empty() {
         return;
     }
 
-    for (c_idx, chain) in structure.iter_chains_mut().enumerate() {
-        for (r_idx, residue) in chain.iter_residues_mut().enumerate() {
-            if disulfide_residues.contains(&(c_idx, r_idx)) && residue.name != "CYX" {
-                residue.name = "CYX".into();
-            }
-        }
-    }
+    structure
+        .par_chains_mut()
+        .enumerate()
+        .for_each(|(c_idx, chain)| {
+            chain
+                .par_residues_mut()
+                .enumerate()
+                .for_each(|(r_idx, residue)| {
+                    if disulfide_residues.contains(&(c_idx, r_idx)) && residue.name != "CYX" {
+                        residue.name = "CYX".into();
+                    }
+                });
+        });
 }
 
 /// Selects a neutral histidine tautomer using the configured strategy.
 ///
 /// # Arguments
 ///
-/// * `structure` - Structure used when hydrogen-bond networks are considered.
 /// * `residue` - Histidine residue being relabeled.
 /// * `strategy` - Selection strategy from [`HisStrategy`].
+/// * `grid` - Optional grid of acceptor atoms for HIS network analysis.
+/// * `indices` - Optional (chain_idx, res_idx) to exclude self-interactions.
 ///
 /// # Returns
 ///
 /// Either `"HID"` or `"HIE"`.
-fn select_neutral_his(structure: &Structure, residue: &Residue, strategy: &HisStrategy) -> String {
+fn select_neutral_his(
+    residue: &Residue,
+    strategy: HisStrategy,
+    grid: Option<&Grid<(usize, usize)>>,
+    indices: Option<(usize, usize)>,
+) -> String {
     match strategy {
         HisStrategy::DirectHID => "HID".to_string(),
         HisStrategy::DirectHIE => "HIE".to_string(),
@@ -267,7 +335,7 @@ fn select_neutral_his(structure: &Structure, residue: &Residue, strategy: &HisSt
                 "HIE".to_string()
             }
         }
-        HisStrategy::HbNetwork => optimize_his_network(structure, residue),
+        HisStrategy::HbNetwork => optimize_his_network(residue, grid, indices),
     }
 }
 
@@ -275,36 +343,30 @@ fn select_neutral_his(structure: &Structure, residue: &Residue, strategy: &HisSt
 ///
 /// # Arguments
 ///
-/// * `structure` - Complete structure used to search for acceptor atoms.
 /// * `residue` - Histidine residue being evaluated.
+/// * `grid` - Grid of acceptor atoms (N/O) with their residue indices.
+/// * `indices` - (chain_idx, res_idx) of the current residue.
 ///
 /// # Returns
 ///
 /// The histidine label (`"HID"` or `"HIE"`) that maximizes compatibility with neighbors.
-fn optimize_his_network(structure: &Structure, residue: &Residue) -> String {
+fn optimize_his_network(
+    residue: &Residue,
+    grid: Option<&Grid<(usize, usize)>>,
+    indices: Option<(usize, usize)>,
+) -> String {
+    let (grid, self_indices) = match (grid, indices) {
+        (Some(g), Some(i)) => (g, i),
+        _ => return "HIE".to_string(),
+    };
+
     let nd1 = residue.atom("ND1");
     let ne2 = residue.atom("NE2");
 
     let has_acceptor_near = |atom: &Atom| -> bool {
-        for chain in structure.iter_chains() {
-            for other_res in chain.iter_residues() {
-                if other_res.id == residue.id && chain.id == "Unknown" {
-                    continue;
-                }
-                if other_res == residue {
-                    continue;
-                }
-
-                for other_atom in other_res.iter_atoms() {
-                    if matches!(other_atom.element, Element::O | Element::N)
-                        && atom.distance_squared(other_atom) < 3.5 * 3.5
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+        grid.neighbors(&atom.pos, 3.5)
+            .exact()
+            .any(|&(c_idx, r_idx)| (c_idx, r_idx) != self_indices)
     };
 
     let nd1_interaction = nd1.map(has_acceptor_near).unwrap_or(false);
