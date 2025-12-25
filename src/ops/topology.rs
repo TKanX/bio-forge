@@ -827,18 +827,44 @@ mod tests {
     #[test]
     fn optional_terminal_atoms_includes_nucleic_5prime_special_atoms() {
         let residue_with_p = five_prime_residue_with_phosphate_and_op3(1);
-        let builder = TopologyBuilder::new();
 
-        assert!(builder.is_optional_terminal_atom(&residue_with_p, "OP3"));
-        assert!(builder.is_optional_terminal_atom(&residue_with_p, "HOP3"));
-        assert!(builder.is_optional_terminal_atom(&residue_with_p, "HOP2"));
-        assert!(!builder.is_optional_terminal_atom(&residue_with_p, "P"));
-        assert!(!builder.is_optional_terminal_atom(&residue_with_p, "OP1"));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "OP3"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "HOP3"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "HOP2"
+        ));
+        assert!(!TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "P"
+        ));
+        assert!(!TopologyBuilder::is_optional_terminal_atom(
+            &residue_with_p,
+            "OP1"
+        ));
 
         let residue_no_p = five_prime_residue_without_phosphate(2);
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "P"));
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "OP1"));
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "OP2"));
-        assert!(builder.is_optional_terminal_atom(&residue_no_p, "HO5'"));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "P"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "OP1"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "OP2"
+        ));
+        assert!(TopologyBuilder::is_optional_terminal_atom(
+            &residue_no_p,
+            "HO5'"
+        ));
     }
 }
