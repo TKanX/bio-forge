@@ -1,5 +1,6 @@
 use crate::model::structure::Structure;
 use crate::model::types::Point;
+use crate::utils::parallel::*;
 use nalgebra::{Rotation3, Vector3};
 
 pub struct Transform;
@@ -7,9 +8,11 @@ pub struct Transform;
 impl Transform {
     pub fn translate(structure: &mut Structure, x: f64, y: f64, z: f64) {
         let translation = Vector3::new(x, y, z);
-        for atom in structure.iter_atoms_mut() {
-            atom.translate_by(&translation);
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.translate_by(&translation);
+            }
+        });
     }
 
     pub fn center_geometry(structure: &mut Structure, target: Option<Point>) {
@@ -17,9 +20,11 @@ impl Transform {
         let target_point = target.unwrap_or(Point::origin());
         let translation = target_point - current_center;
 
-        for atom in structure.iter_atoms_mut() {
-            atom.translate_by(&translation);
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.translate_by(&translation);
+            }
+        });
     }
 
     pub fn center_mass(structure: &mut Structure, target: Option<Point>) {
@@ -27,9 +32,11 @@ impl Transform {
         let target_point = target.unwrap_or(Point::origin());
         let translation = target_point - current_com;
 
-        for atom in structure.iter_atoms_mut() {
-            atom.translate_by(&translation);
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.translate_by(&translation);
+            }
+        });
     }
 
     pub fn rotate_x(structure: &mut Structure, radians: f64) {
@@ -53,9 +60,11 @@ impl Transform {
     }
 
     fn apply_rotation(structure: &mut Structure, rotation: Rotation3<f64>) {
-        for atom in structure.iter_atoms_mut() {
-            atom.pos = rotation * atom.pos;
-        }
+        structure.par_residues_mut().for_each(|residue| {
+            for atom in residue.iter_atoms_mut() {
+                atom.pos = rotation * atom.pos;
+            }
+        });
 
         if let Some(box_vecs) = structure.box_vectors {
             let v1 = Vector3::from(box_vecs[0]);
