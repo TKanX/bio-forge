@@ -63,6 +63,17 @@ impl Chain {
         self.residues.push(residue);
     }
 
+    /// Reserves capacity for at least `additional` more residues to be inserted.
+    ///
+    /// Use this to avoid frequent reallocations when adding a known number of residues.
+    ///
+    /// # Arguments
+    ///
+    /// * `additional` - The number of residues to reserve space for.
+    pub fn reserve(&mut self, additional: usize) {
+        self.residues.reserve(additional);
+    }
+
     /// Looks up a residue by identifier and optional insertion code.
     ///
     /// # Arguments
