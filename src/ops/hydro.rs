@@ -408,13 +408,28 @@ fn construct_hydrogens_for_residue(
     let existing_atoms: HashSet<String> =
         residue.atoms().iter().map(|a| a.name.to_string()).collect();
 
+    let rotation_override = if residue.standard_name == Some(StandardResidue::HOH) {
+        let mut rng = rand::rng();
+        Some(
+            Rotation3::from_axis_angle(
+                &Vector3::y_axis(),
+                rng.random_range(0.0..std::f64::consts::TAU),
+            ) * Rotation3::from_axis_angle(
+                &Vector3::x_axis(),
+                rng.random_range(0.0..std::f64::consts::TAU),
+            ),
+        )
+    } else {
+        None
+    };
+
     for (h_name, h_tmpl_pos, anchors_iter) in template_view.hydrogens() {
         if existing_atoms.contains(h_name) {
             continue;
         }
 
         let anchors: Vec<&str> = anchors_iter.collect();
-        if let Ok(pos) = reconstruct_geometry(residue, h_tmpl_pos, &anchors) {
+        if let Ok(pos) = reconstruct_geometry(residue, h_tmpl_pos, &anchors, rotation_override) {
             residue.add_atom(Atom::new(h_name, Element::H, pos));
         } else {
             return Err(Error::incomplete_for_hydro(
@@ -481,6 +496,7 @@ fn c_term_should_be_protonated(config: &HydroConfig) -> bool {
 /// * `residue` - Residue containing measured anchor atoms.
 /// * `target_tmpl_pos` - Target hydrogen position from the template.
 /// * `anchor_names` - Atom names used to determine the rigid-body transform.
+/// * `rotation_override` - Optional rotation to use if the system is under-constrained (e.g. water).
 ///
 /// # Returns
 ///
@@ -489,6 +505,7 @@ fn reconstruct_geometry(
     residue: &Residue,
     target_tmpl_pos: Point,
     anchor_names: &[&str],
+    rotation_override: Option<Rotation3<f64>>,
 ) -> Result<Point, ()> {
     let template_view = db::get_template(&residue.name).ok_or(())?;
 
@@ -507,7 +524,14 @@ fn reconstruct_geometry(
         template_pts.push(t_pos);
     }
 
-    let (rot, trans) = calculate_transform(&residue_pts, &template_pts).ok_or(())?;
+    let (mut rot, mut trans) = calculate_transform(&residue_pts, &template_pts).ok_or(())?;
+
+    if let Some(override_rot) = rotation_override {
+        if anchor_names.len() == 1 {
+            rot = override_rot.into_inner();
+            trans = residue_pts[0].coords - rot * template_pts[0].coords;
+        }
+    }
 
     Ok(rot * target_tmpl_pos + trans)
 }
