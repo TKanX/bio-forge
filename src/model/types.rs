@@ -338,7 +338,7 @@ pub enum StandardResidue {
 ///
 /// Distinguishes classical single, double, triple, and aromatic delocalized interactions so
 /// that exported formats and force-field derivations can preserve chemical intent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize)]
 pub enum BondOrder {
     /// Classical single bond.
     Single,
