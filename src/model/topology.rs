@@ -12,7 +12,7 @@ use std::fmt;
 ///
 /// Bonds store canonical atom indices (ascending order) so equality, hashing, and sorting
 /// remain stable regardless of the order in which the connection was created.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Bond {
     /// Index of the first atom (always the lesser index after canonicalization).
     pub a1_idx: usize,
