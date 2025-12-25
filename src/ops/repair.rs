@@ -37,7 +37,7 @@ pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
     structure
         .par_residues_mut()
         .filter(|r| r.category == ResidueCategory::Standard)
-        .try_for_each(|residue| repair_residue(residue))
+        .try_for_each(repair_residue)
 }
 
 /// Cleans and rebuilds an individual residue using its template definition.
