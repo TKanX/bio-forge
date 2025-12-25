@@ -319,6 +319,16 @@ mod tests {
     }
 
     #[test]
+    fn chain_reserve_increases_capacity() {
+        let mut chain = Chain::new("A");
+        let initial_capacity = chain.residues.capacity();
+
+        chain.reserve(50);
+
+        assert!(chain.residues.capacity() >= initial_capacity + 50);
+    }
+
+    #[test]
     fn chain_residue_returns_correct_residue() {
         let mut chain = Chain::new("A");
         let residue = Residue::new(
@@ -416,6 +426,23 @@ mod tests {
         chain.add_residue(residue);
 
         assert_eq!(chain.residue_count(), 1);
+    }
+
+    #[test]
+    fn chain_atom_count_calculates_total_atoms() {
+        let mut chain = Chain::new("A");
+
+        let mut r1 = sample_residue(1, "ALA");
+        r1.add_atom(Atom::new("CA", Element::C, Point::new(0.0, 0.0, 0.0)));
+        r1.add_atom(Atom::new("CB", Element::C, Point::new(0.0, 0.0, 0.0)));
+
+        let mut r2 = sample_residue(2, "GLY");
+        r2.add_atom(Atom::new("N", Element::N, Point::new(0.0, 0.0, 0.0)));
+
+        chain.add_residue(r1);
+        chain.add_residue(r2);
+
+        assert_eq!(chain.atom_count(), 3);
     }
 
     #[test]
