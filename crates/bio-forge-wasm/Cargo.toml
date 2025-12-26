@@ -1,0 +1,16 @@
+[package]
+name = "bio-forge-wasm"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+
+[dependencies]
+bio-forge = { path = "../bio-forge" }
+
+[lib]
+name = "bio_forge"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
