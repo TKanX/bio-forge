@@ -242,7 +242,7 @@ impl<'a, T> GridNeighborhood<'a, T> {
     ///
     /// This method uses the internally stored positions to perform the distance check,
     /// avoiding the need for external lookups.
-    pub fn exact(self) -> impl Iterator<Item = &'a T> + 'a {
+    pub fn exact(self) -> impl Iterator<Item = (Point, &'a T)> + 'a {
         ExactGridNeighborhood { inner: self }
     }
 }
@@ -257,7 +257,7 @@ pub struct ExactGridNeighborhood<'a, T> {
 }
 
 impl<'a, T> Iterator for ExactGridNeighborhood<'a, T> {
-    type Item = &'a T;
+    type Item = (Point, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -266,7 +266,7 @@ impl<'a, T> Iterator for ExactGridNeighborhood<'a, T> {
                 self.inner.curr_item_idx = self.inner.grid.next[self.inner.curr_item_idx as usize];
 
                 if nalgebra::distance_squared(pos, &self.inner.center) <= self.inner.radius_sq {
-                    return Some(item);
+                    return Some((*pos, item));
                 }
                 continue;
             }
