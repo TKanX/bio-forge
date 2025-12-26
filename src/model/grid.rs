@@ -422,9 +422,12 @@ mod tests {
 
         let exact_neighbors: Vec<_> = grid.neighbors(&center, radius).exact().collect();
         assert_eq!(exact_neighbors.len(), 2);
-        assert!(exact_neighbors.contains(&&"Center"));
-        assert!(exact_neighbors.contains(&&"Inside"));
-        assert!(!exact_neighbors.contains(&&"Outside"));
+
+        let contains_item = |name: &str| exact_neighbors.iter().any(|(_, item)| **item == name);
+
+        assert!(contains_item("Center"));
+        assert!(contains_item("Inside"));
+        assert!(!contains_item("Outside"));
     }
 
     #[test]
