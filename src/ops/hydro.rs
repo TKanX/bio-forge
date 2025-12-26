@@ -134,7 +134,7 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
 ///
 /// # Returns
 ///
-/// A `Grid` containing positions and residue indices of N and O atoms.
+/// A `Grid` containing positions and residue indices of all N, O, and F atoms.
 fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
     let atoms: Vec<(Point, (usize, usize))> = structure
         .iter_chains()
@@ -146,7 +146,7 @@ fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
                 .flat_map(move |(r_idx, residue)| {
                     residue
                         .iter_atoms()
-                        .filter(|a| matches!(a.element, Element::N | Element::O))
+                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
                         .map(move |a| (a.pos, (c_idx, r_idx)))
                 })
         })
@@ -276,7 +276,7 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
         .flat_map_iter(|(pos, (c_idx, r_idx))| {
             grid.neighbors(pos, DISULFIDE_SG_THRESHOLD)
                 .exact()
-                .filter_map(move |&(neighbor_c, neighbor_r)| {
+                .filter_map(move |(_, &(neighbor_c, neighbor_r))| {
                     if *c_idx == neighbor_c && *r_idx == neighbor_r {
                         None
                     } else {
@@ -344,7 +344,7 @@ fn select_neutral_his(
 /// # Arguments
 ///
 /// * `residue` - Histidine residue being evaluated.
-/// * `grid` - Grid of acceptor atoms (N/O) with their residue indices.
+/// * `grid` - Grid of acceptor atoms (N/O/F) in the structure.
 /// * `indices` - (chain_idx, res_idx) of the current residue.
 ///
 /// # Returns
@@ -360,23 +360,85 @@ fn optimize_his_network(
         _ => return "HIE".to_string(),
     };
 
-    let nd1 = residue.atom("ND1");
-    let ne2 = residue.atom("NE2");
+    let score_hid = calculate_h_bond_score(residue, "ND1", "CG", "CE1", grid, self_indices);
 
-    let has_acceptor_near = |atom: &Atom| -> bool {
-        grid.neighbors(&atom.pos, 3.5)
-            .exact()
-            .any(|&(c_idx, r_idx)| (c_idx, r_idx) != self_indices)
+    let score_hie = calculate_h_bond_score(residue, "NE2", "CD2", "CE1", grid, self_indices);
+
+    if score_hid > score_hie {
+        "HID".to_string()
+    } else {
+        "HIE".to_string()
+    }
+}
+
+/// Calculates a geometric score for a potential hydrogen bond network.
+///
+/// Computes the hypothetical hydrogen position for an sp2 nitrogen and sums the
+/// scores of valid H-bonds formed with nearby acceptors. A valid H-bond must
+/// satisfy both distance (< 2.7Å H...A) and angle (> 90° N-H...A) constraints.
+///
+/// # Arguments
+///
+/// * `residue` - The residue containing the donor nitrogen.
+/// * `n_name` - Name of the nitrogen atom (donor).
+/// * `c1_name` - Name of the first neighbor carbon.
+/// * `c2_name` - Name of the second neighbor carbon.
+/// * `grid` - Spatial index of potential acceptors.
+/// * `self_idx` - Chain and residue index of the current residue to exclude self-interactions.
+///
+/// # Returns
+///
+/// A positive floating-point score, where higher indicates better H-bonding.
+fn calculate_h_bond_score(
+    residue: &Residue,
+    n_name: &str,
+    c1_name: &str,
+    c2_name: &str,
+    grid: &Grid<(usize, usize)>,
+    self_idx: (usize, usize),
+) -> f64 {
+    let n = match residue.atom(n_name) {
+        Some(a) => a,
+        None => return 0.0,
+    };
+    let c1 = match residue.atom(c1_name) {
+        Some(a) => a,
+        None => return 0.0,
+    };
+    let c2 = match residue.atom(c2_name) {
+        Some(a) => a,
+        None => return 0.0,
     };
 
-    let nd1_interaction = nd1.map(has_acceptor_near).unwrap_or(false);
-    let ne2_interaction = ne2.map(has_acceptor_near).unwrap_or(false);
+    let v1 = (c1.pos - n.pos).normalize();
+    let v2 = (c2.pos - n.pos).normalize();
+    let bisector = (v1 + v2).normalize();
+    let h_dir = -bisector;
+    let h_pos = n.pos + h_dir;
 
-    match (nd1_interaction, ne2_interaction) {
-        (true, false) => "HID".to_string(),
-        (false, true) => "HIE".to_string(),
-        _ => "HID".to_string(),
+    let mut score = 0.0;
+
+    for (a_pos, &idx) in grid.neighbors(&n.pos, 3.5).exact() {
+        if idx == self_idx {
+            continue;
+        }
+
+        let h_a_vec = a_pos - h_pos;
+        let dist_sq = h_a_vec.norm_squared();
+
+        if dist_sq > 2.7 * 2.7 {
+            continue;
+        }
+
+        let h_a_dir = h_a_vec.normalize();
+        let cos_theta = h_dir.dot(&h_a_dir);
+
+        if cos_theta > 0.0 {
+            score += (1.0 / dist_sq) * (cos_theta * cos_theta);
+        }
     }
+
+    score
 }
 
 /// Rebuilds hydrogens for a single residue using template geometry and terminal rules.
