@@ -176,7 +176,7 @@ impl TopologyBuilder {
                 .flat_map(|(pos, idx1)| {
                     grid.neighbors(pos, disulfide_cutoff)
                         .exact()
-                        .filter_map(|idx2| {
+                        .filter_map(|(_, idx2)| {
                             if *idx1 < *idx2 {
                                 Some(Bond::new(*idx1, *idx2, BondOrder::Single))
                             } else {
