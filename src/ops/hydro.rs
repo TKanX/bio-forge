@@ -146,7 +146,7 @@ fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
                 .flat_map(move |(r_idx, residue)| {
                     residue
                         .iter_atoms()
-                        .filter(|a| matches!(a.element, Element::N | Element::O))
+                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
                         .map(move |a| (a.pos, (c_idx, r_idx)))
                 })
         })
