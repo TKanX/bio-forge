@@ -1,5 +1,6 @@
 [package]
 name = "bio-forge-wasm"
+description = "WebAssembly bindings for BioForge, a pure Rust library for the automated repair, preparation, and topology construction of biological macromolecules."
 version.workspace = true
 authors.workspace = true
 license.workspace = true
