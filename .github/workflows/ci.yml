@@ -8,8 +8,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build, Format, Lint, and Test
+  core:
+    name: Core (CLI & Lib)
     runs-on: ubuntu-latest
 
     steps:
@@ -19,14 +19,30 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build Workspace
+        run: cargo build --verbose --workspace
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --workspace
 
       - name: Check documentation
-        run: cargo doc --document-private-items
+        run: cargo doc --workspace --document-private-items
+
+  wasm:
+    name: WASM Bindings
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "latest"
+
+      - name: Build WASM
+        run: wasm-pack build crates/bio-forge-wasm --target bundler
