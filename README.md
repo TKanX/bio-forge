@@ -4,21 +4,27 @@
 
 ## Highlights
 
-- **Template-driven accuracy** – curated TOML templates for standard amino acids, nucleotides, and water guarantee reproducible coordinates, charges, and bonding.
-- **Rich structure model** – lightweight `Atom`, `Residue`, `Chain`, and `Structure` types backed by `nalgebra` make geometric operations trivial.
-- **Format interoperability** – buffered readers/writers for PDB, mmCIF, and MOL2 plus error types that surface precise parsing diagnostics.
-- **Preparation pipeline** – cleaning, repairing, protonating, solvation, coordinate transforms, and topology reconstruction share a common `ops::Error` so workflows compose cleanly.
-- **Rust-first ergonomics** – no FFI, no global mutable state beyond the lazily-loaded template store, and edition 2024 guarantees modern language features.
+- **Template-driven accuracy** – Curated TOML templates for standard amino acids, nucleotides, and water guarantee reproducible coordinates, charges, and bonding.
+- **High performance** – Multithreaded processing (via rayon) handles million-atom systems in milliseconds; single-pass parsing, in-place mutation, and zero-copy serialization minimize overhead.
+- **Rich structure model** – Lightweight `Atom`, `Residue`, `Chain`, and `Structure` types backed by `nalgebra` make geometric operations trivial.
+- **Format interoperability** – Buffered readers/writers for PDB, mmCIF, and MOL2 plus error types that surface precise parsing diagnostics.
+- **Preparation pipeline** – Cleaning, repairing, protonating, solvation, coordinate transforms, and topology reconstruction share a common `ops::Error` so workflows compose cleanly.
+- **WebAssembly support** – Full-featured WASM bindings for modern JavaScript bundlers (Vite, webpack, Rollup); ideal for browser-based molecular viewers and web applications.
+- **Rust-first ergonomics** – No FFI, no global mutable state beyond the lazily-loaded template store, and edition 2024 guarantees modern language features.
 
-## Processing Pipeline at a Glance
+## Processing Pipeline
 
-1. **Load** – `io::read_pdb_structure` or `io::read_mmcif_structure` parses coordinates with help from `IoContext` alias resolution.
+```
+Load → Clean → Repair → Hydrogenate → Solvate → Topology → Write
+```
+
+1. **Load** – `io::read_pdb_structure` or `io::read_mmcif_structure` parses coordinates with `IoContext` alias resolution.
 2. **Clean** – `ops::clean_structure` removes waters, ions, hetero residues, or arbitrary residue names via `CleanConfig`.
-3. **Repair** – `ops::repair_structure` realigns residues to their templates and rebuilds missing heavy atoms (including OXT on C-termini and OP3 on 5'-phosphorylated nucleic acids).
+3. **Repair** – `ops::repair_structure` realigns residues to templates and rebuilds missing heavy atoms (OXT on C-termini, OP3 on 5'-phosphorylated nucleic acids).
 4. **Hydrogenate** – `ops::add_hydrogens` infers protonation states (configurable pH and histidine strategy) and reconstructs hydrogens from template anchors.
-5. **Solvate/Ionize** – `ops::solvate_structure` creates a periodic box, packs water on a configurable lattice, and swaps molecules for ions to satisfy a target charge.
-6. **Topology** – `ops::TopologyBuilder` replays template bond definitions, peptide-link detection, nucleic backbone connectivity, and disulfide heuristics to emit a `Topology` object.
-7. **Write** – `io::write_pdb_structure` / `io::write_mmcif_structure` serialize the processed structure; the corresponding `write_*_topology` helpers emit CONECT or `struct_conn` records.
+5. **Solvate** – `ops::solvate_structure` creates a periodic box, packs water on a configurable lattice, and swaps molecules for ions to satisfy a target charge.
+6. **Topology** – `ops::TopologyBuilder` emits bond connectivity with peptide-link detection, nucleic backbone connectivity, and disulfide heuristics.
+7. **Write** – `io::write_pdb_structure` / `io::write_mmcif_structure` serialize the processed structure; `write_*_topology` helpers emit CONECT or `struct_conn` records.
 
 ## Quick Start
 
@@ -38,7 +44,7 @@ bioforge repair -i input.pdb -o repaired.pdb
 
 Explore the complete preparation pipeline in the [user manual](MANUAL.md) and browse the [examples directory](https://github.com/TKanX/bio-forge/tree/main/examples) for runnable walkthroughs.
 
-### For Library Developers
+### For Library Developers (Rust)
 
 BioForge is also available as a library crate. Add it to your `Cargo.toml` dependencies:
 
@@ -85,11 +91,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 > Prefer mmCIF? Swap in `read_mmcif_structure` / `write_mmcif_structure`. Need to process ligands? Parse them via `io::read_mol2_template` and feed the resulting `Template` into `TopologyBuilder::add_hetero_template`.
 
+### For Library Developers (JavaScript/TypeScript)
+
+Install via npm:
+
+```bash
+npm install bio-forge
+```
+
+Prepare a structure with the following code:
+
+```typescript
+import { Structure } from "bio-forge";
+
+const pdb = await fetch("https://files.rcsb.org/view/1UBQ.pdb").then((r) =>
+  r.text()
+);
+const structure = Structure.fromPdb(pdb);
+
+structure.clean({ removeWater: true });
+structure.repair();
+structure.addHydrogens({ hisStrategy: "network" });
+
+const topology = structure.toTopology();
+console.log(`Bonds: ${topology.bondCount}`);
+```
+
 ## Documentation
 
-- [CLI User Manual](MANUAL.md) – detailed explanation of command-line usage and options.
-- [API Documentation](https://docs.rs/bio-forge) – comprehensive reference for public types and functions.
-- [Architecture Overview](ARCHITECTURE.md) – detailed explanation of the internal design and algorithms used in BioForge.
+| Resource                                                          | Description                    |
+| ----------------------------------------------------------------- | ------------------------------ |
+| [CLI Manual](MANUAL.md)                                           | Command-line usage and options |
+| [JS/TS API](https://github.com/TKanX/bio-forge/blob/main/API.md)  | WebAssembly bindings reference |
+| [Rust API](https://docs.rs/bio-forge)                             | Library documentation          |
+| [Architecture](ARCHITECTURE.md)                                   | Internal design and algorithms |
+| [Examples](https://github.com/TKanX/bio-forge/tree/main/examples) | Runnable walkthroughs          |
 
 ## License
 
