@@ -10,7 +10,7 @@
     "build:full": "npm run wasm && npm run build",
     "start": "next start",
     "type-check": "tsc --noEmit",
-    "lint": "next lint",
+    "lint": "eslint .",
     "format": "prettier --write ."
   },
   "dependencies": {
