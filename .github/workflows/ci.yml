@@ -65,6 +65,10 @@ jobs:
         with:
           node-version: 20
 
+      - name: Build WASM package
+        run: npm run wasm
+        working-directory: ./web
+
       - name: Install dependencies
         run: npm install
         working-directory: ./web
@@ -78,5 +82,5 @@ jobs:
         working-directory: ./web
 
       - name: Build web app
-        run: npm run build:full
+        run: npm run build
         working-directory: ./web
