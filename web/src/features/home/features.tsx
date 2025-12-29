@@ -7,7 +7,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ZapIcon, BoxIcon, CubeIcon, FileTextIcon } from "@/ui/icons";
+import { ZapIcon, LayersIcon, BoxIcon, FileTextIcon } from "@/ui/icons";
 
 // ============================================================================
 // Data
@@ -21,13 +21,13 @@ const features = [
       "Millisecond-level processing of million-atom systems with parallel computation via Rayon.",
   },
   {
-    icon: BoxIcon,
+    icon: LayersIcon,
     title: "Complete Pipeline",
     description:
       "Clean, repair, protonate, solvate, and build topologies—all in one unified workflow.",
   },
   {
-    icon: CubeIcon,
+    icon: BoxIcon,
     title: "WebAssembly Powered",
     description:
       "Run natively in your browser. No server uploads, no data leaves your machine.",
