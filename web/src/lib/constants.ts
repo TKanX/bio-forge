@@ -10,14 +10,20 @@ export const APP_NAME = "BioForge";
 /** GitHub repository URL */
 export const GITHUB_URL = "https://github.com/TKanX/bio-forge";
 
+/** GitHub releases URL */
+export const RELEASES_URL = `${GITHUB_URL}/releases`;
+
 /** npm package URL */
 export const NPM_URL = "https://www.npmjs.com/package/bio-forge";
+
+/** Rust documentation URL */
+export const RUST_DOCS_URL = "https://docs.rs/bio-forge";
 
 /** Documentation URLs */
 export const DOCS = {
   manual: `${GITHUB_URL}/blob/main/MANUAL.md`,
   api: `${GITHUB_URL}/blob/main/API.md`,
-  rustDocs: "https://docs.rs/bio-forge",
+  rustDocs: RUST_DOCS_URL,
   examples: `${GITHUB_URL}/tree/main/examples`,
 } as const;
 
@@ -38,9 +44,6 @@ export const ACCEPTED_EXTENSIONS = [
   ...ACCEPTED_STRUCTURE_EXTENSIONS,
   ...ACCEPTED_TEMPLATE_EXTENSIONS,
 ];
-
-// Alias for backward compatibility
-export const SUPPORTED_EXTENSIONS = ACCEPTED_EXTENSIONS;
 
 /** MIME types for file downloads */
 export const MIME_TYPES = {
