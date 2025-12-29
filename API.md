@@ -5,13 +5,13 @@ WebAssembly bindings for molecular structure manipulation in browser and Node.js
 ## Installation
 
 ```bash
-npm install bio-forge
+npm install bio-forge-wasm
 ```
 
 ## Quick Start
 
 ```typescript
-import { Structure } from "bio-forge";
+import { Structure } from "bio-forge-wasm";
 
 const pdb = await fetch("https://files.rcsb.org/view/1UBQ.pdb").then((r) =>
   r.text()
