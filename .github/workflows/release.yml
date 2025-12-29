@@ -68,7 +68,7 @@ jobs:
           SOURCE_PATH="target/${{ matrix.target }}/release/$BINARY_NAME"
 
           cp "$SOURCE_PATH" "$ARTIFACT_DIR/$BINARY_NAME"
-          cp LICENSE README.md MANUAL.md "$ARTIFACT_DIR/"
+          cp LICENSE README.md MANUAL.md ARCHITECTURE.md "$ARTIFACT_DIR/"
 
           cd $ARTIFACT_DIR
 
