@@ -6,16 +6,26 @@
 
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Button } from "@/ui/primitives";
-import { ChevronRightIcon, DownloadIcon } from "@/ui/icons";
+import { ChevronRightIcon, DownloadIcon, LoaderIcon } from "@/ui/icons";
+import { RELEASES_URL } from "@/lib";
 
 // ============================================================================
 // Component
 // ============================================================================
 
 export function Hero() {
+  const router = useRouter();
+  const [isLaunching, setIsLaunching] = useState(false);
+
+  const handleLaunch = () => {
+    setIsLaunching(true);
+    router.push("/app");
+  };
+
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center px-6 overflow-hidden">
       {/* Background effects */}
@@ -63,12 +73,24 @@ export function Hero() {
           transition={{ duration: 0.6, delay: 0.6 }}
           className="flex flex-col sm:flex-row gap-4 justify-center"
         >
-          <Link href="/app">
-            <Button size="lg" className="gap-2 text-base px-8">
-              Launch Web App
-              <ChevronRightIcon className="size-5" />
-            </Button>
-          </Link>
+          <Button
+            size="lg"
+            className="gap-2 text-base px-8"
+            onClick={handleLaunch}
+            disabled={isLaunching}
+          >
+            {isLaunching ? (
+              <>
+                <LoaderIcon className="size-5 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              <>
+                Launch Web App
+                <ChevronRightIcon className="size-5" />
+              </>
+            )}
+          </Button>
           <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
             <Button
               variant="secondary"
