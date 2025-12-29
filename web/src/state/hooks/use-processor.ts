@@ -164,8 +164,8 @@ export function useProcessor() {
       let successCount = 0;
 
       for (const file of targetFiles) {
-        await yieldToEventLoop();
         updateFileStatus(file.id, "processing");
+        await yieldToEventLoop();
 
         try {
           const result = executePipeline(
