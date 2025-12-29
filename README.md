@@ -96,13 +96,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 Install via npm:
 
 ```bash
-npm install bio-forge
+npm install bio-forge-wasm
 ```
 
 Prepare a structure with the following code:
 
 ```typescript
-import { Structure } from "bio-forge";
+import { Structure } from "bio-forge-wasm";
 
 const pdb = await fetch("https://files.rcsb.org/view/1UBQ.pdb").then((r) =>
   r.text()
