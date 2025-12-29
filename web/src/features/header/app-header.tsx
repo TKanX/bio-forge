@@ -151,7 +151,7 @@ export function AppHeader() {
         >
           {isProcessing ? (
             <>
-              <LoaderIcon className="size-4" />
+              <LoaderIcon className="size-4 animate-spin" />
               <span className="hidden sm:inline">Processing...</span>
             </>
           ) : (
