@@ -10,6 +10,7 @@ import type {
   FileStatus,
   TemplateEntry,
   StructureInfo,
+  WasmTopology,
 } from "@/core";
 
 // ============================================================================
@@ -35,6 +36,12 @@ interface FileActions {
   // File updates
   updateFileStatus: (id: string, status: FileStatus, error?: string) => void;
   updateFileInfo: (id: string, info: StructureInfo) => void;
+  updateFileResult: (
+    id: string,
+    info: StructureInfo,
+    topology?: WasmTopology
+  ) => void;
+  clearFileTopology: (id: string) => void;
 
   // Selection
   selectFile: (id: string) => void;
@@ -56,6 +63,18 @@ interface FileActions {
 type FileStore = FileState & FileActions;
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Safely free a file's WASM resources (structure and topology).
+ */
+function freeFileResources(file: FileEntry): void {
+  file.structure.free();
+  file.topology?.free();
+}
+
+// ============================================================================
 // Store
 // ============================================================================
 
@@ -71,9 +90,10 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   removeFile: (id) =>
     set((state) => {
-      // Free WASM resource before removing
       const file = state.files.find((f) => f.id === id);
-      file?.structure.free();
+      if (file) {
+        freeFileResources(file);
+      }
 
       const newSelectedIds = new Set(state.selectedIds);
       newSelectedIds.delete(id);
@@ -87,10 +107,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
     set((state) => {
       const idSet = new Set(ids);
 
-      // Free WASM resources before removing
       state.files
         .filter((f) => idSet.has(f.id))
-        .forEach((f) => f.structure.free());
+        .forEach((f) => freeFileResources(f));
 
       const newSelectedIds = new Set(state.selectedIds);
       ids.forEach((id) => newSelectedIds.delete(id));
@@ -102,8 +121,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   clearFiles: () =>
     set((state) => {
-      // Free all WASM resources
-      state.files.forEach((f) => f.structure.free());
+      state.files.forEach((f) => freeFileResources(f));
       return {
         files: [],
         selectedIds: new Set(),
@@ -130,6 +148,39 @@ export const useFileStore = create<FileStore>((set, get) => ({
       files: state.files.map((f) =>
         f.id === id ? { ...f, info, status: "ready" as const } : f
       ),
+    })),
+
+  updateFileResult: (id, info, topology) =>
+    set((state) => ({
+      files: state.files.map((f) => {
+        if (f.id !== id) return f;
+
+        if (f.topology && topology) {
+          f.topology.free();
+        }
+
+        return {
+          ...f,
+          info,
+          topology,
+          status: "completed" as const,
+          version: f.version + 1,
+        };
+      }),
+    })),
+
+  clearFileTopology: (id) =>
+    set((state) => ({
+      files: state.files.map((f) => {
+        if (f.id !== id) return f;
+
+        f.topology?.free();
+
+        return {
+          ...f,
+          topology: undefined,
+        };
+      }),
     })),
 
   selectFile: (id) =>
@@ -172,8 +223,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       const completedFiles = state.files.filter(
         (f) => f.status === "completed"
       );
-      // Free WASM resources
-      completedFiles.forEach((f) => f.structure.free());
+      completedFiles.forEach((f) => freeFileResources(f));
 
       const completedIds = new Set(completedFiles.map((f) => f.id));
       const newSelectedIds = new Set(
@@ -192,7 +242,6 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   removeTemplate: (id) =>
     set((state) => {
-      // Free WASM resource before removing
       const template = state.templates.find((t) => t.id === id);
       template?.template.free();
 
@@ -203,7 +252,6 @@ export const useFileStore = create<FileStore>((set, get) => ({
 
   clearTemplates: () =>
     set((state) => {
-      // Free all WASM resources
       state.templates.forEach((t) => t.template.free());
       return { templates: [] };
     }),
