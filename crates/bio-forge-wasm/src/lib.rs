@@ -375,8 +375,8 @@ impl Topology {
         let mut builder = TopologyBuilder::new().disulfide_cutoff(cfg.disulfide_cutoff);
 
         if let Some(tpls) = templates {
-            for t in tpls {
-                builder = builder.add_hetero_template(t.inner);
+            for t in &tpls {
+                builder = builder.add_hetero_template(t.inner.clone());
             }
         }
 
