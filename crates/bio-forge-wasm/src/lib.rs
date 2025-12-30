@@ -378,6 +378,23 @@ impl Topology {
             for t in &tpls {
                 builder = builder.add_hetero_template(t.inner.clone());
             }
+            // SAFETY: `templates` originates from JavaScript via wasm-bindgen, and JS
+            // owns the `Template` instances. If we allowed Rust to drop `tpls` normally,
+            // wasm-bindgen would attempt to drop each `Template` when this Vec goes out
+            // of scope, potentially conflicting with JS's ownership and leading to a
+            // double-drop of JS-owned resources.
+            //
+            // At this point we have already cloned every `Template`'s inner value into
+            // the `TopologyBuilder` via `add_hetero_template(t.inner.clone())`, so
+            // setting the length to zero does not lose data or leak ownership: the data
+            // we need has been fully copied, and the remaining `Template` handles are
+            // logically owned and managed on the JS side.
+            //
+            // By manually setting the Vec length to zero, we prevent Rust from running
+            // the destructors of the elements when `tpls` is dropped, which aligns with
+            // the wasm-bindgen ABI and the JavaScript ownership model: Rust treats these
+            // values as borrowed handles and does not free them, leaving lifetime
+            // management to JavaScript.
             unsafe {
                 tpls.set_len(0);
             }
