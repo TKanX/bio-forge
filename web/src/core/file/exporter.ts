@@ -60,7 +60,28 @@ export function generateOutputName(
 }
 
 /**
- * Export a single file entry using binary methods.
+ * Get serialized bytes for a file entry.
+ *
+ * Uses topology serialization (with bond connectivity) when available,
+ * otherwise falls back to structure-only serialization.
+ *
+ * @param file - File entry to serialize
+ * @param format - Output format
+ * @returns Serialized bytes
+ */
+function serializeFile(file: FileEntry, format: StructureFormat): Uint8Array {
+  if (file.topology) {
+    return format === "pdb"
+      ? file.topology.toPdbBytes()
+      : file.topology.toMmcifBytes();
+  }
+  return format === "pdb"
+    ? file.structure.toPdbBytes()
+    : file.structure.toMmcifBytes();
+}
+
+/**
+ * Export a single file entry.
  *
  * @param file - File entry to export
  * @param targetFormat - Output format
@@ -69,10 +90,7 @@ export function exportFileEntry(
   file: FileEntry,
   targetFormat: StructureFormat
 ): void {
-  const bytes =
-    targetFormat === "pdb"
-      ? file.structure.toPdbBytes()
-      : file.structure.toMmcifBytes();
+  const bytes = serializeFile(file, targetFormat);
   const filename = generateOutputName(file.name, targetFormat);
   downloadFile(bytes, filename);
 }
@@ -96,10 +114,7 @@ export async function exportFilesAsZip(
   const zip = new JSZip();
 
   for (const file of files) {
-    const bytes =
-      targetFormat === "pdb"
-        ? file.structure.toPdbBytes()
-        : file.structure.toMmcifBytes();
+    const bytes = serializeFile(file, targetFormat);
     const filename = generateOutputName(file.name, targetFormat);
     zip.file(filename, bytes);
   }
