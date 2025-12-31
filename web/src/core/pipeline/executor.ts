@@ -70,6 +70,8 @@ export function executePipeline(
 ): PipelineResult {
   const structure = file.structure;
 
+  let topology: WasmTopology | undefined;
+
   try {
     // Step 1: Clean
     if (config.clean.enabled) {
@@ -92,7 +94,6 @@ export function executePipeline(
     }
 
     // Step 5: Build topology
-    let topology: WasmTopology | undefined;
     let bondCount: number | undefined;
     if (config.topology.enabled) {
       const wasmTemplates = templates?.map((t) => t.template);
@@ -109,6 +110,8 @@ export function executePipeline(
 
     return { info, topology, bondCount };
   } catch (error) {
+    topology?.free();
+
     const message = error instanceof Error ? error.message : "Unknown error";
     throw new PipelineError(message);
   }
