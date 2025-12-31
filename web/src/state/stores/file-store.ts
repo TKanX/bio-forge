@@ -179,8 +179,8 @@ export const useFileStore = create<FileStore>((set, get) => ({
       ),
     }));
 
-    // Cleanup: free old topology if replaced (not if just setting new one)
-    if (oldTopology && topology) {
+    // Cleanup: free old topology if it has been replaced or cleared
+    if (oldTopology && oldTopology !== topology) {
       oldTopology.free();
     }
   },
