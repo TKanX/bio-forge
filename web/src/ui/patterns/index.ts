@@ -3,7 +3,8 @@
  */
 
 export { ToastContainer } from "./toast";
-export { Dropzone, type DropzoneProps } from "./dropzone";
+export { Dropzone, filterFiles, type DropzoneProps } from "./dropzone";
+export { GlobalDropzone, type GlobalDropzoneProps } from "./global-dropzone";
 export {
   StatCard,
   MiniStat,

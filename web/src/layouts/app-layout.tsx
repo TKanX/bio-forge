@@ -7,9 +7,10 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { useUIStore } from "@/state";
+import { useUIStore, useFileUpload } from "@/state";
 import { useKeyboardShortcuts } from "@/state/hooks";
-import { cn } from "@/lib";
+import { GlobalDropzone } from "@/ui/patterns";
+import { ACCEPTED_STRUCTURE_EXTENSIONS, cn } from "@/lib";
 
 // ============================================================================
 // Types
@@ -30,12 +31,19 @@ interface AppLayoutProps {
 
 export function AppLayout({ header, sidebar, children }: AppLayoutProps) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const { handleFiles } = useFileUpload();
 
   // Enable global keyboard shortcuts
   useKeyboardShortcuts();
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
+      {/* Global drop zone overlay */}
+      <GlobalDropzone
+        onDrop={handleFiles}
+        accept={ACCEPTED_STRUCTURE_EXTENSIONS}
+      />
+
       {/* Header */}
       {header}
 

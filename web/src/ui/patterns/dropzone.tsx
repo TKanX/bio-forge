@@ -204,7 +204,14 @@ function DefaultContent({ isDragging, accept }: DefaultContentProps) {
 // Helpers
 // ============================================================================
 
-function filterFiles(files: File[], accept?: string[]): File[] {
+/**
+ * Filter files by accepted extensions.
+ *
+ * @param files - Array of files to filter
+ * @param accept - Array of accepted extensions (e.g., [".pdb", ".mol2"])
+ * @returns Filtered array of files matching accepted extensions
+ */
+export function filterFiles(files: File[], accept?: string[]): File[] {
   if (!accept || accept.length === 0) return files;
 
   return files.filter((file) => {
