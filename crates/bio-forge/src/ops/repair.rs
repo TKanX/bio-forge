@@ -1,4 +1,4 @@
-//! Reconstructs standard residues so they match reference templates before topology building.
+//! Reconstructs standard residues to match reference templates before topology building.
 //!
 //! The repair pipeline removes stray atoms, regenerates missing heavy atoms (including OXT on
 //! C-terminal proteins and OP3 on 5'-phosphorylated nucleic acids), and aligns completions
@@ -10,12 +10,25 @@ use crate::model::{
     atom::Atom,
     residue::Residue,
     structure::Structure,
-    types::{Element, ResidueCategory, ResiduePosition},
+    types::{Element, Point, ResidueCategory, ResiduePosition},
 };
 use crate::ops::error::Error;
 use crate::utils::parallel::*;
-use nalgebra::{Matrix3, Point3, Rotation3, Vector3};
+use nalgebra::{Matrix3, Rotation3, Unit, Vector3};
 use std::collections::HashSet;
+
+/// Standard C-O bond length in carboxylate groups (Å).
+const CARBOXYL_CO_BOND_LENGTH: f64 = 1.25;
+/// O-C-OXT angle in carboxylate groups (degrees).
+const CARBOXYL_OCO_ANGLE_DEG: f64 = 126.0;
+/// Standard P-O bond length in phosphate groups (Å).
+const PHOSPHATE_PO_BOND_LENGTH: f64 = 1.48;
+
+/// Alignment pair mapping residue position to template position.
+type AlignmentPairs = Vec<(Point, Point)>;
+
+/// Missing atom data: (name, element, template_position).
+type MissingAtoms = Vec<(String, Element, Point)>;
 
 /// Repairs every standard residue in a structure by invoking the internal repair logic.
 ///
@@ -57,45 +70,118 @@ pub fn repair_structure(structure: &mut Structure) -> Result<(), Error> {
 /// # Errors
 ///
 /// Returns [`Error::MissingInternalTemplate`] if the residue name lacks a template,
-/// [`Error::AlignmentFailed`] if no anchor atoms remain, or other errors bubbled from
-/// [`calculate_transform`].
+/// or [`Error::AlignmentFailed`] if no anchor atoms remain for alignment.
 fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
     let template_name = residue.name.clone();
-    let template_view =
+    let template =
         db::get_template(&template_name).ok_or_else(|| Error::MissingInternalTemplate {
             res_name: template_name.to_string(),
         })?;
 
-    let mut valid_names: HashSet<String> = HashSet::new();
+    let status = detect_terminal_status(residue);
 
-    for (name, _, _) in template_view.heavy_atoms() {
-        valid_names.insert(name.to_string());
-    }
-    for (name, _, _) in template_view.hydrogens() {
-        valid_names.insert(name.to_string());
-    }
+    let valid_names = build_valid_names(template, &status);
 
-    let is_protein_c_term = residue.standard_name.is_some_and(|s| s.is_protein())
-        && residue.position == ResiduePosition::CTerminal;
+    clean_invalid_atoms(residue, &valid_names);
 
-    let is_nucleic_5prime = residue.standard_name.is_some_and(|s| s.is_nucleic())
-        && residue.position == ResiduePosition::FivePrime;
-    let has_5prime_phosphate = is_nucleic_5prime && residue.has_atom("P");
+    let (align_pairs, missing_atoms) = collect_alignment_data(residue, template, &status);
 
-    if is_protein_c_term {
-        valid_names.insert("OXT".to_string());
+    if align_pairs.is_empty() {
+        return Err(Error::alignment_failed(
+            &*residue.name,
+            residue.id,
+            "No matching heavy atoms found for alignment",
+        ));
     }
 
-    if is_nucleic_5prime {
-        if has_5prime_phosphate {
-            valid_names.insert("OP3".to_string());
+    let transform = calculate_transform(&align_pairs)?;
+    synthesize_missing_template_atoms(residue, missing_atoms, &transform);
+
+    synthesize_terminal_atoms(residue, &status);
+
+    Ok(())
+}
+
+/// Encapsulates the terminal status of a residue for conditional processing.
+struct TerminalStatus {
+    /// True if this is a C-terminal protein residue.
+    is_protein_c_term: bool,
+    /// True if this is a 5'-terminal nucleic acid residue.
+    is_nucleic_5prime: bool,
+    /// True if the 5'-terminal has a phosphate group (P atom present).
+    has_5prime_phosphate: bool,
+}
+
+/// Detects the terminal status of a residue based on its type and position.
+///
+/// # Arguments
+///
+/// * `residue` - Residue whose terminal status is to be determined.
+///
+/// # Returns
+///
+/// `TerminalStatus` struct indicating terminal properties.
+fn detect_terminal_status(residue: &Residue) -> TerminalStatus {
+    let is_protein = residue.standard_name.is_some_and(|s| s.is_protein());
+    let is_nucleic = residue.standard_name.is_some_and(|s| s.is_nucleic());
+
+    TerminalStatus {
+        is_protein_c_term: is_protein && residue.position == ResiduePosition::CTerminal,
+        is_nucleic_5prime: is_nucleic && residue.position == ResiduePosition::FivePrime,
+        has_5prime_phosphate: is_nucleic
+            && residue.position == ResiduePosition::FivePrime
+            && residue.has_atom("P"),
+    }
+}
+
+/// Builds the set of atom names that should exist in the final residue.
+///
+/// Includes all template atoms plus terminal-specific atoms, with adjustments
+/// for 5'-terminal nucleic acids without phosphate groups.
+///
+/// # Arguments
+///
+/// * `template` - Template view for the residue.
+/// * `status` - Terminal status of the residue.
+///
+/// # Returns
+///
+/// `HashSet<String>` containing valid atom names.
+fn build_valid_names(template: db::TemplateView, status: &TerminalStatus) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    for (name, _, _) in template.heavy_atoms() {
+        names.insert(name.to_string());
+    }
+
+    for (name, _, _) in template.hydrogens() {
+        names.insert(name.to_string());
+    }
+
+    if status.is_protein_c_term {
+        names.insert("OXT".to_string());
+    }
+
+    if status.is_nucleic_5prime {
+        if status.has_5prime_phosphate {
+            names.insert("OP3".to_string());
         } else {
-            valid_names.remove("P");
-            valid_names.remove("OP1");
-            valid_names.remove("OP2");
+            names.remove("P");
+            names.remove("OP1");
+            names.remove("OP2");
         }
     }
 
+    names
+}
+
+/// Removes atoms from the residue that are not in the valid name set.
+///
+/// # Arguments
+///
+/// * `residue` - Residue to be cleaned.
+/// * `valid_names` - Set of valid atom names to retain.
+fn clean_invalid_atoms(residue: &mut Residue, valid_names: &HashSet<String>) {
     let atoms_to_remove: Vec<String> = residue
         .atoms()
         .iter()
@@ -106,152 +192,95 @@ fn repair_residue(residue: &mut Residue) -> Result<(), Error> {
     for name in atoms_to_remove {
         residue.remove_atom(&name);
     }
+}
 
+/// Collects alignment pairs and identifies missing heavy atoms from the template.
+///
+/// # Arguments
+///
+/// * `residue` - Residue being repaired.
+/// * `template` - Template view for the residue.
+/// * `status` - Terminal status of the residue.
+///
+/// # Returns
+///
+/// Tuple containing a vector of alignment pairs and a vector of missing atoms.
+fn collect_alignment_data(
+    residue: &Residue,
+    template: db::TemplateView,
+    status: &TerminalStatus,
+) -> (AlignmentPairs, MissingAtoms) {
     let mut align_pairs = Vec::new();
-    let mut missing_heavy_atoms = Vec::new();
+    let mut missing_atoms = Vec::new();
 
-    for (name, element, tmpl_pos) in template_view.heavy_atoms() {
-        if is_nucleic_5prime && !has_5prime_phosphate && matches!(name, "P" | "OP1" | "OP2") {
+    for (name, element, tmpl_pos) in template.heavy_atoms() {
+        if status.is_nucleic_5prime
+            && !status.has_5prime_phosphate
+            && matches!(name, "P" | "OP1" | "OP2")
+        {
             continue;
         }
 
         if let Some(atom) = residue.atom(name) {
             align_pairs.push((atom.pos, tmpl_pos));
         } else {
-            missing_heavy_atoms.push((name.to_string(), element, tmpl_pos));
+            missing_atoms.push((name.to_string(), element, tmpl_pos));
         }
     }
 
-    if is_protein_c_term {
-        let tmpl_oxt_pos = calculate_template_oxt(template_view);
-
-        if let Some(oxt) = residue.atom("OXT") {
-            align_pairs.push((oxt.pos, tmpl_oxt_pos));
-        } else {
-            missing_heavy_atoms.push(("OXT".to_string(), Element::O, tmpl_oxt_pos));
-        }
-    }
-
-    if has_5prime_phosphate {
-        let tmpl_op3_pos = calculate_template_op3(template_view);
-
-        if let Some(op3) = residue.atom("OP3") {
-            align_pairs.push((op3.pos, tmpl_op3_pos));
-        } else {
-            missing_heavy_atoms.push(("OP3".to_string(), Element::O, tmpl_op3_pos));
-        }
-    }
-
-    if align_pairs.is_empty() {
-        return Err(Error::alignment_failed(
-            &*residue.name,
-            residue.id,
-            "No matching heavy atoms found for alignment",
-        ));
-    }
-
-    let (rotation, translation) = calculate_transform(&align_pairs)?;
-
-    for (name, element, tmpl_pos) in missing_heavy_atoms {
-        let new_pos = rotation * tmpl_pos + translation;
-        residue.add_atom(Atom::new(&name, element, new_pos));
-    }
-
-    Ok(())
+    (align_pairs, missing_atoms)
 }
 
-/// Synthesizes an `OXT` position for C-terminal proteins using backbone vectors.
-///
-/// # Arguments
-///
-/// * `view` - Template view providing heavy atom coordinates.
-///
-/// # Returns
-///
-/// Estimated `OXT` coordinate; falls back to the origin if required atoms are absent.
-fn calculate_template_oxt(view: db::TemplateView) -> Point3<f64> {
-    let get_pos = |n| {
-        view.heavy_atoms()
-            .find(|(name, _, _)| *name == n)
-            .map(|(_, _, pos)| pos)
-    };
-
-    let p_c = get_pos("C");
-    let p_ca = get_pos("CA");
-    let p_o = get_pos("O");
-
-    if let (Some(c), Some(ca), Some(o)) = (p_c, p_ca, p_o) {
-        let v_c_o = (o - c).normalize();
-        let v_c_ca = (ca - c).normalize();
-
-        let dir_oxt = -(v_c_o + v_c_ca).normalize();
-
-        return c + dir_oxt * 1.25;
-    }
-
-    Point3::origin()
+/// Rigid transformation consisting of rotation and translation.
+struct Transform {
+    rotation: Matrix3<f64>,
+    translation: Vector3<f64>,
 }
 
-/// Synthesizes an `OP3` position for 5'-terminal phosphorylated nucleic acids.
-///
-/// The OP3 oxygen completes the tetrahedral coordination around phosphorus at 5' termini,
-/// positioned opposite to the centroid of OP1, OP2, and O5' relative to P.
-///
-/// # Arguments
-///
-/// * `view` - Template view providing heavy atom coordinates.
-///
-/// # Returns
-///
-/// Estimated `OP3` coordinate; falls back to the origin if required atoms are absent.
-fn calculate_template_op3(view: db::TemplateView) -> Point3<f64> {
-    let get_pos = |n| {
-        view.heavy_atoms()
-            .find(|(name, _, _)| *name == n)
-            .map(|(_, _, pos)| pos)
-    };
-
-    let p_p = get_pos("P");
-    let p_op1 = get_pos("OP1");
-    let p_op2 = get_pos("OP2");
-    let p_o5 = get_pos("O5'");
-
-    if let (Some(p), Some(op1), Some(op2), Some(o5)) = (p_p, p_op1, p_op2, p_o5) {
-        let centroid = (op1.coords + op2.coords + o5.coords) / 3.0;
-        let direction = (p.coords - centroid).normalize();
-
-        return p + direction * 1.48;
+impl Transform {
+    /// Applies the transformation to a point in template space.
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - Point in template space to be transformed.
+    ///
+    /// # Returns
+    ///
+    /// Transformed `Point` in residue space.
+    fn apply(&self, point: Point) -> Point {
+        Point::from(self.rotation * point.coords + self.translation)
     }
-
-    Point3::origin()
 }
 
 /// Computes the best-fit rigid transform mapping template positions to residue coordinates.
 ///
-/// Handles one- and two-point special cases before applying Kabsch alignment for larger sets.
+/// Handles special cases:
+/// - Single point: pure translation
+/// - Two points: single-axis rotation + translation
+/// - Three or more points: full Kabsch SVD alignment
 ///
 /// # Arguments
 ///
-/// * `pairs` - Corresponding residue/template coordinate pairs.
+/// * `pairs` - Slice of point pairs (residue position, template position).
 ///
 /// # Returns
 ///
-/// Transformation `(rotation, translation)` aligning the template to the residue.
+/// `Ok(Transform)` containing the computed rotation and translation.
 ///
 /// # Errors
 ///
-/// Returns [`Error::AlignmentFailed`] when the SVD cannot produce a valid rotation.
-fn calculate_transform(
-    pairs: &[(Point3<f64>, Point3<f64>)],
-) -> Result<(Matrix3<f64>, Vector3<f64>), Error> {
+/// Returns [`Error::AlignmentFailed`] if SVD computation fails.
+fn calculate_transform(pairs: &[(Point, Point)]) -> Result<Transform, Error> {
     let n = pairs.len();
 
     let center_res = pairs.iter().map(|p| p.0.coords).sum::<Vector3<f64>>() / n as f64;
     let center_tmpl = pairs.iter().map(|p| p.1.coords).sum::<Vector3<f64>>() / n as f64;
 
     if n == 1 {
-        let translation = center_res - center_tmpl;
-        return Ok((Matrix3::identity(), translation));
+        return Ok(Transform {
+            rotation: Matrix3::identity(),
+            translation: center_res - center_tmpl,
+        });
     }
 
     if n == 2 {
@@ -261,9 +290,10 @@ fn calculate_transform(
         let rotation =
             Rotation3::rotation_between(&v_tmpl, &v_res).unwrap_or_else(Rotation3::identity);
 
-        let translation = center_res - rotation * center_tmpl;
-
-        return Ok((rotation.into_inner(), translation));
+        return Ok(Transform {
+            rotation: rotation.into_inner(),
+            translation: center_res - rotation * center_tmpl,
+        });
     }
 
     let mut cov = Matrix3::zeros();
@@ -277,24 +307,127 @@ fn calculate_transform(
 
     let svd = cov.svd(true, true);
 
-    let u = svd
-        .u
-        .ok_or_else(|| Error::alignment_failed("N/A", 0, "SVD U failed"))?;
-    let v_t = svd
-        .v_t
-        .ok_or_else(|| Error::alignment_failed("N/A", 0, "SVD V_T failed"))?;
+    let u = svd.u.ok_or_else(|| {
+        Error::alignment_failed("", 0, "SVD decomposition failed: U matrix unavailable")
+    })?;
+    let v_t = svd.v_t.ok_or_else(|| {
+        Error::alignment_failed("", 0, "SVD decomposition failed: V^T matrix unavailable")
+    })?;
 
     let mut rotation = u * v_t;
-
     if rotation.determinant() < 0.0 {
         let mut correction = Matrix3::identity();
         correction[(2, 2)] = -1.0;
         rotation = u * correction * v_t;
     }
 
-    let translation = center_res - rotation * center_tmpl;
+    Ok(Transform {
+        rotation,
+        translation: center_res - rotation * center_tmpl,
+    })
+}
 
-    Ok((rotation, translation))
+/// Synthesizes missing template atoms by applying the rigid transform.
+///
+/// # Arguments
+///
+/// * `residue` - Residue to which missing atoms will be added.
+/// * `missing_atoms` - Vector of missing atom data (name, element, template position).
+/// * `transform` - Rigid transform to map template positions to residue space.
+fn synthesize_missing_template_atoms(
+    residue: &mut Residue,
+    missing_atoms: Vec<(String, Element, Point)>,
+    transform: &Transform,
+) {
+    for (name, element, tmpl_pos) in missing_atoms {
+        let new_pos = transform.apply(tmpl_pos);
+        residue.add_atom(Atom::new(&name, element, new_pos));
+    }
+}
+
+/// Dispatches terminal atom synthesis based on terminal status.
+///
+/// # Arguments
+///
+/// * `residue` - Residue to be modified.
+/// * `status` - Terminal status of the residue.
+fn synthesize_terminal_atoms(residue: &mut Residue, status: &TerminalStatus) {
+    if status.is_protein_c_term {
+        synthesize_oxt(residue);
+    }
+
+    if status.has_5prime_phosphate {
+        synthesize_op3(residue);
+    }
+}
+
+/// Synthesizes OXT atom for C-terminal protein residues using local carboxyl geometry.
+///
+/// The OXT position is calculated entirely in world-space using the actual positions
+/// of C, O, and CA atoms, ensuring correct carboxylate geometry regardless of global
+/// residue orientation.
+///
+/// # Arguments
+///
+/// * `residue` - Residue to which OXT will be added.
+fn synthesize_oxt(residue: &mut Residue) {
+    if residue.has_atom("OXT") {
+        return;
+    }
+
+    let (c, o, ca) = match (residue.atom("C"), residue.atom("O"), residue.atom("CA")) {
+        (Some(c), Some(o), Some(ca)) => (c.pos, o.pos, ca.pos),
+        _ => return,
+    };
+
+    let v_co = (o - c).normalize();
+    let v_cca = (ca - c).normalize();
+
+    let normal = v_co.cross(&v_cca);
+    if normal.norm() < 1e-10 {
+        return;
+    }
+    let normal = Unit::new_normalize(normal);
+
+    let angle = CARBOXYL_OCO_ANGLE_DEG.to_radians();
+    let rotation = Rotation3::from_axis_angle(&normal, angle);
+    let oxt_direction = rotation * v_co;
+
+    let oxt_pos = c + oxt_direction * CARBOXYL_CO_BOND_LENGTH;
+
+    residue.add_atom(Atom::new("OXT", Element::O, oxt_pos));
+}
+
+/// Synthesizes OP3 atom for 5'-terminal phosphorylated nucleic acid residues.
+///
+/// The OP3 position is calculated using tetrahedral geometry around the phosphorus
+/// atom, placing OP3 opposite to the centroid of the other three oxygen ligands.
+///
+/// # Arguments
+///
+/// * `residue` - Residue to which OP3 will be added.
+fn synthesize_op3(residue: &mut Residue) {
+    if residue.has_atom("OP3") {
+        return;
+    }
+
+    let (p, op1, op2, o5) = match (
+        residue.atom("P"),
+        residue.atom("OP1"),
+        residue.atom("OP2"),
+        residue.atom("O5'"),
+    ) {
+        (Some(p), Some(op1), Some(op2), Some(o5)) => (p.pos, op1.pos, op2.pos, o5.pos),
+        _ => return,
+    };
+
+    let centroid = Point::from((op1.coords + op2.coords + o5.coords) / 3.0);
+
+    let direction = (p - centroid).normalize();
+
+    let op3_pos = p + direction * PHOSPHATE_PO_BOND_LENGTH;
+
+    residue.add_atom(Atom::new("OP3", Element::O, op3_pos));
 }
 
 #[cfg(test)]
@@ -333,6 +466,16 @@ mod tests {
 
     fn standard_residue(name: &str, id: i32, std: StandardResidue) -> Residue {
         Residue::new(id, None, name, Some(std), ResidueCategory::Standard)
+    }
+
+    fn distance(a: Point, b: Point) -> f64 {
+        (a - b).norm()
+    }
+
+    fn angle_deg(a: Point, center: Point, b: Point) -> f64 {
+        let v1 = (a - center).normalize();
+        let v2 = (b - center).normalize();
+        v1.dot(&v2).clamp(-1.0, 1.0).acos().to_degrees()
     }
 
     #[test]
@@ -482,6 +625,80 @@ mod tests {
         assert!(
             hetero_after.has_atom("XX"),
             "hetero residue should remain untouched"
+        );
+    }
+
+    #[test]
+    fn oxt_geometry_has_correct_distance_and_angle() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = standard_residue("ALA", 1, StandardResidue::ALA);
+        residue.position = ResiduePosition::CTerminal;
+
+        for (name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(name, element, pos));
+        }
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        let c = residue.atom("C").expect("C").pos;
+        let o = residue.atom("O").expect("O").pos;
+        let oxt = residue.atom("OXT").expect("OXT").pos;
+
+        let c_oxt_dist = distance(c, oxt);
+        assert!(
+            (c_oxt_dist - CARBOXYL_CO_BOND_LENGTH).abs() < 0.1,
+            "C-OXT distance {c_oxt_dist:.3} should be ~{CARBOXYL_CO_BOND_LENGTH} Å"
+        );
+
+        let o_c_oxt_angle = angle_deg(o, c, oxt);
+        assert!(
+            (o_c_oxt_angle - CARBOXYL_OCO_ANGLE_DEG).abs() < 3.0,
+            "O-C-OXT angle {o_c_oxt_angle:.1}° should be ~{CARBOXYL_OCO_ANGLE_DEG}°"
+        );
+    }
+
+    #[test]
+    fn op3_geometry_has_correct_distance_and_tetrahedral_angles() {
+        let template = db::get_template("DA").expect("template DA");
+        let mut residue = standard_residue("DA", 1, StandardResidue::DA);
+        residue.position = ResiduePosition::FivePrime;
+
+        for (name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(name, element, pos));
+        }
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        let p = residue.atom("P").expect("P").pos;
+        let op1 = residue.atom("OP1").expect("OP1").pos;
+        let op2 = residue.atom("OP2").expect("OP2").pos;
+        let o5 = residue.atom("O5'").expect("O5'").pos;
+        let op3 = residue.atom("OP3").expect("OP3").pos;
+
+        let p_op3_dist = distance(p, op3);
+        assert!(
+            (p_op3_dist - PHOSPHATE_PO_BOND_LENGTH).abs() < 0.1,
+            "P-OP3 distance {p_op3_dist:.3} should be ~{PHOSPHATE_PO_BOND_LENGTH} Å"
+        );
+
+        let tetrahedral_angle = 109.5;
+        let tolerance = 10.0;
+
+        let op1_p_op3 = angle_deg(op1, p, op3);
+        let op2_p_op3 = angle_deg(op2, p, op3);
+        let o5_p_op3 = angle_deg(o5, p, op3);
+
+        assert!(
+            (op1_p_op3 - tetrahedral_angle).abs() < tolerance,
+            "OP1-P-OP3 angle {op1_p_op3:.1}° should be ~{tetrahedral_angle}°"
+        );
+        assert!(
+            (op2_p_op3 - tetrahedral_angle).abs() < tolerance,
+            "OP2-P-OP3 angle {op2_p_op3:.1}° should be ~{tetrahedral_angle}°"
+        );
+        assert!(
+            (o5_p_op3 - tetrahedral_angle).abs() < tolerance,
+            "O5'-P-OP3 angle {o5_p_op3:.1}° should be ~{tetrahedral_angle}°"
         );
     }
 }
