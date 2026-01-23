@@ -327,7 +327,7 @@ fn calculate_transform(pairs: &[(Point, Point)]) -> Result<Transform, Error> {
     })
 }
 
-/// Synthesizes missing template atoms by applying the SVD transform.
+/// Synthesizes missing template atoms by applying the rigid transform.
 ///
 /// # Arguments
 ///
