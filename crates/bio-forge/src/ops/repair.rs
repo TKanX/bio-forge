@@ -307,12 +307,12 @@ fn calculate_transform(pairs: &[(Point, Point)]) -> Result<Transform, Error> {
 
     let svd = cov.svd(true, true);
 
-    let u = svd
-        .u
-        .ok_or_else(|| Error::alignment_failed("N/A", 0, "SVD U matrix computation failed"))?;
-    let v_t = svd
-        .v_t
-        .ok_or_else(|| Error::alignment_failed("N/A", 0, "SVD V_T matrix computation failed"))?;
+    let u = svd.u.ok_or_else(|| {
+        Error::alignment_failed("", 0, "SVD decomposition failed: U matrix unavailable")
+    })?;
+    let v_t = svd.v_t.ok_or_else(|| {
+        Error::alignment_failed("", 0, "SVD decomposition failed: V^T matrix unavailable")
+    })?;
 
     let mut rotation = u * v_t;
     if rotation.determinant() < 0.0 {
