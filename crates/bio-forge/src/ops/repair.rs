@@ -423,3 +423,276 @@ fn synthesize_op3(residue: &mut Residue) {
 
     residue.add_atom(Atom::new("OP3", Element::O, op3_pos));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        atom::Atom,
+        chain::Chain,
+        residue::Residue,
+        types::{Element, Point, ResidueCategory, ResiduePosition, StandardResidue},
+    };
+
+    fn add_atom_from_template(
+        residue: &mut Residue,
+        template: db::TemplateView<'_>,
+        atom_name: &str,
+    ) {
+        let (_, element, pos) = template
+            .heavy_atoms()
+            .find(|(name, _, _)| *name == atom_name)
+            .unwrap_or_else(|| panic!("template atom {atom_name} missing"));
+        residue.add_atom(Atom::new(atom_name, element, pos));
+    }
+
+    fn add_hydrogen_from_template(
+        residue: &mut Residue,
+        template: db::TemplateView<'_>,
+        atom_name: &str,
+    ) {
+        let (_, pos, _) = template
+            .hydrogens()
+            .find(|(name, _, _)| *name == atom_name)
+            .unwrap_or_else(|| panic!("template hydrogen {atom_name} missing"));
+        residue.add_atom(Atom::new(atom_name, Element::H, pos));
+    }
+
+    fn standard_residue(name: &str, id: i32, std: StandardResidue) -> Residue {
+        Residue::new(id, None, name, Some(std), ResidueCategory::Standard)
+    }
+
+    fn distance(a: Point, b: Point) -> f64 {
+        (a - b).norm()
+    }
+
+    fn angle_deg(a: Point, center: Point, b: Point) -> f64 {
+        let v1 = (a - center).normalize();
+        let v2 = (b - center).normalize();
+        v1.dot(&v2).clamp(-1.0, 1.0).acos().to_degrees()
+    }
+
+    #[test]
+    fn repair_residue_rebuilds_missing_heavy_atoms_and_cleans_extras() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = standard_residue("ALA", 1, StandardResidue::ALA);
+        residue.position = ResiduePosition::Internal;
+
+        add_atom_from_template(&mut residue, template, "N");
+        add_atom_from_template(&mut residue, template, "CA");
+        add_hydrogen_from_template(&mut residue, template, "HA");
+        residue.add_atom(Atom::new("FAKE", Element::C, Point::new(5.0, 5.0, 5.0)));
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        for (name, _, _) in template.heavy_atoms() {
+            assert!(residue.has_atom(name), "missing heavy atom {name}");
+        }
+        assert!(
+            residue.has_atom("HA"),
+            "valid hydrogen removed unexpectedly"
+        );
+        assert!(
+            !residue.has_atom("FAKE"),
+            "extraneous atom should be removed"
+        );
+    }
+
+    #[test]
+    fn repair_residue_adds_oxt_for_cterm_protein() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = standard_residue("ALA", 10, StandardResidue::ALA);
+        residue.position = ResiduePosition::CTerminal;
+
+        add_atom_from_template(&mut residue, template, "C");
+        add_atom_from_template(&mut residue, template, "CA");
+        add_atom_from_template(&mut residue, template, "O");
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        let oxt = residue.atom("OXT").expect("OXT should be synthesized");
+        assert_eq!(oxt.element, Element::O);
+    }
+
+    #[test]
+    fn repair_residue_adds_op3_for_5prime_with_phosphate() {
+        let template = db::get_template("DA").expect("template DA");
+        let mut residue = standard_residue("DA", 1, StandardResidue::DA);
+        residue.position = ResiduePosition::FivePrime;
+
+        add_atom_from_template(&mut residue, template, "P");
+        add_atom_from_template(&mut residue, template, "OP1");
+        add_atom_from_template(&mut residue, template, "OP2");
+        add_atom_from_template(&mut residue, template, "O5'");
+        add_atom_from_template(&mut residue, template, "C5'");
+        add_atom_from_template(&mut residue, template, "C4'");
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        assert!(residue.has_atom("P"), "phosphorus should be retained");
+        assert!(residue.has_atom("OP1"), "OP1 should be retained");
+        assert!(residue.has_atom("OP2"), "OP2 should be retained");
+        assert!(residue.has_atom("O5'"), "O5' should be retained");
+        let op3 = residue
+            .atom("OP3")
+            .expect("OP3 should be synthesized for 5'-phosphate");
+        assert_eq!(op3.element, Element::O);
+    }
+
+    #[test]
+    fn repair_residue_excludes_phosphate_for_5prime_without_p() {
+        let template = db::get_template("DA").expect("template DA");
+        let mut residue = standard_residue("DA", 1, StandardResidue::DA);
+        residue.position = ResiduePosition::FivePrime;
+
+        add_atom_from_template(&mut residue, template, "O5'");
+        add_atom_from_template(&mut residue, template, "C5'");
+        add_atom_from_template(&mut residue, template, "C4'");
+        add_atom_from_template(&mut residue, template, "C3'");
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        assert!(!residue.has_atom("P"), "P should not be synthesized");
+        assert!(!residue.has_atom("OP1"), "OP1 should not be synthesized");
+        assert!(!residue.has_atom("OP2"), "OP2 should not be synthesized");
+        assert!(!residue.has_atom("OP3"), "OP3 should not be synthesized");
+        assert!(residue.has_atom("O5'"), "O5' should be retained");
+    }
+
+    #[test]
+    fn repair_residue_3prime_nucleic_preserves_o3() {
+        let template = db::get_template("DA").expect("template DA");
+        let mut residue = standard_residue("DA", 10, StandardResidue::DA);
+        residue.position = ResiduePosition::ThreePrime;
+
+        add_atom_from_template(&mut residue, template, "C3'");
+        add_atom_from_template(&mut residue, template, "O3'");
+        add_atom_from_template(&mut residue, template, "C4'");
+        add_atom_from_template(&mut residue, template, "C5'");
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        assert!(
+            residue.has_atom("O3'"),
+            "O3' should be present for 3' terminal"
+        );
+    }
+
+    #[test]
+    fn repair_residue_errors_when_no_alignment_atoms_survive() {
+        let mut residue = standard_residue("ALA", 2, StandardResidue::ALA);
+        residue.add_atom(Atom::new("FAKE", Element::C, Point::origin()));
+
+        let err = repair_residue(&mut residue).expect_err("should fail without anchors");
+        match err {
+            Error::AlignmentFailed { .. } => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn repair_structure_updates_standard_residues_only() {
+        let template = db::get_template("GLY").expect("template GLY");
+        let mut standard = standard_residue("GLY", 5, StandardResidue::GLY);
+        add_atom_from_template(&mut standard, template, "N");
+        add_atom_from_template(&mut standard, template, "CA");
+
+        let mut hetero = Residue::new(20, None, "LIG", None, ResidueCategory::Hetero);
+        hetero.add_atom(Atom::new("XX", Element::C, Point::new(-1.0, 0.0, 0.0)));
+
+        let mut chain = Chain::new("A");
+        chain.add_residue(standard);
+        chain.add_residue(hetero);
+
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+
+        repair_structure(&mut structure).expect("repair succeeds");
+
+        let chain = structure.chain("A").expect("chain A");
+        let fixed = chain.residue(5, None).unwrap();
+        for (name, _, _) in template.heavy_atoms() {
+            assert!(fixed.has_atom(name), "missing atom {name} after repair");
+        }
+
+        let hetero_after = chain.residue(20, None).unwrap();
+        assert!(
+            hetero_after.has_atom("XX"),
+            "hetero residue should remain untouched"
+        );
+    }
+
+    #[test]
+    fn oxt_geometry_has_correct_distance_and_angle() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = standard_residue("ALA", 1, StandardResidue::ALA);
+        residue.position = ResiduePosition::CTerminal;
+
+        for (name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(name, element, pos));
+        }
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        let c = residue.atom("C").expect("C").pos;
+        let o = residue.atom("O").expect("O").pos;
+        let oxt = residue.atom("OXT").expect("OXT").pos;
+
+        let c_oxt_dist = distance(c, oxt);
+        assert!(
+            (c_oxt_dist - CARBOXYL_CO_BOND_LENGTH).abs() < 0.1,
+            "C-OXT distance {c_oxt_dist:.3} should be ~{CARBOXYL_CO_BOND_LENGTH} Å"
+        );
+
+        let o_c_oxt_angle = angle_deg(o, c, oxt);
+        assert!(
+            (o_c_oxt_angle - CARBOXYL_OCO_ANGLE_DEG).abs() < 3.0,
+            "O-C-OXT angle {o_c_oxt_angle:.1}° should be ~{CARBOXYL_OCO_ANGLE_DEG}°"
+        );
+    }
+
+    #[test]
+    fn op3_geometry_has_correct_distance_and_tetrahedral_angles() {
+        let template = db::get_template("DA").expect("template DA");
+        let mut residue = standard_residue("DA", 1, StandardResidue::DA);
+        residue.position = ResiduePosition::FivePrime;
+
+        for (name, element, pos) in template.heavy_atoms() {
+            residue.add_atom(Atom::new(name, element, pos));
+        }
+
+        repair_residue(&mut residue).expect("repair succeeds");
+
+        let p = residue.atom("P").expect("P").pos;
+        let op1 = residue.atom("OP1").expect("OP1").pos;
+        let op2 = residue.atom("OP2").expect("OP2").pos;
+        let o5 = residue.atom("O5'").expect("O5'").pos;
+        let op3 = residue.atom("OP3").expect("OP3").pos;
+
+        let p_op3_dist = distance(p, op3);
+        assert!(
+            (p_op3_dist - PHOSPHATE_PO_BOND_LENGTH).abs() < 0.1,
+            "P-OP3 distance {p_op3_dist:.3} should be ~{PHOSPHATE_PO_BOND_LENGTH} Å"
+        );
+
+        let tetrahedral_angle = 109.5;
+        let tolerance = 10.0;
+
+        let op1_p_op3 = angle_deg(op1, p, op3);
+        let op2_p_op3 = angle_deg(op2, p, op3);
+        let o5_p_op3 = angle_deg(o5, p, op3);
+
+        assert!(
+            (op1_p_op3 - tetrahedral_angle).abs() < tolerance,
+            "OP1-P-OP3 angle {op1_p_op3:.1}° should be ~{tetrahedral_angle}°"
+        );
+        assert!(
+            (op2_p_op3 - tetrahedral_angle).abs() < tolerance,
+            "OP2-P-OP3 angle {op2_p_op3:.1}° should be ~{tetrahedral_angle}°"
+        );
+        assert!(
+            (o5_p_op3 - tetrahedral_angle).abs() < tolerance,
+            "O5'-P-OP3 angle {o5_p_op3:.1}° should be ~{tetrahedral_angle}°"
+        );
+    }
+}
