@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/bio-forge", "crates/bio-forge-wasm"]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Tony Kan <tianchengkan@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/TKanX/bio-forge"
