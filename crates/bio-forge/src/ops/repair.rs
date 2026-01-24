@@ -657,6 +657,7 @@ mod tests {
         repair_residue(&mut residue).expect("repair succeeds");
 
         let c = residue.atom("C").expect("C").pos;
+        let ca = residue.atom("CA").expect("CA").pos;
         let o = residue.atom("O").expect("O").pos;
         let oxt = residue.atom("OXT").expect("OXT").pos;
 
@@ -670,6 +671,12 @@ mod tests {
         assert!(
             (o_c_oxt_angle - CARBOXYL_OCO_ANGLE_DEG).abs() < 3.0,
             "O-C-OXT angle {o_c_oxt_angle:.1}° should be ~{CARBOXYL_OCO_ANGLE_DEG}°"
+        );
+
+        let oxt_ca_dist = distance(oxt, ca);
+        assert!(
+            oxt_ca_dist > 2.0,
+            "OXT-CA distance {oxt_ca_dist:.3} should be > 2.0 Å (OXT must be away from CA)"
         );
     }
 
