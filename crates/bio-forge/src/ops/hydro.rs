@@ -265,40 +265,26 @@ fn build_carboxylate_grid(structure: &Structure) -> Grid<(usize, usize)> {
                 .iter_residues()
                 .enumerate()
                 .flat_map(move |(r_idx, residue)| {
-                    let mut oxygens = Vec::new();
+                    let idx = (c_idx, r_idx);
+                    let is_asp = residue.standard_name == Some(StandardResidue::ASP)
+                        && residue.name.as_str() != "ASH"; // ASP carboxylate (only deprotonated ASP, not ASH)
+                    let is_glu = residue.standard_name == Some(StandardResidue::GLU)
+                        && residue.name.as_str() != "GLH"; // GLU carboxylate (only deprotonated GLU, not GLH)
+                    let is_c_term = residue.position == ResiduePosition::CTerminal; // C-terminal carboxylate (O and OXT)
 
-                    // ASP carboxylate (only deprotonated ASP, not ASH)
-                    if residue.standard_name == Some(StandardResidue::ASP)
-                        && residue.name.as_str() != "ASH"
-                    {
-                        if let Some(od1) = residue.atom("OD1") {
-                            oxygens.push((od1.pos, (c_idx, r_idx)));
-                        }
-                        if let Some(od2) = residue.atom("OD2") {
-                            oxygens.push((od2.pos, (c_idx, r_idx)));
-                        }
-                    }
+                    let atom_names: &[&str] = if is_asp {
+                        &["OD1", "OD2"]
+                    } else if is_glu {
+                        &["OE1", "OE2"]
+                    } else if is_c_term {
+                        &["O", "OXT"]
+                    } else {
+                        &[]
+                    };
 
-                    // GLU carboxylate (only deprotonated GLU, not GLH)
-                    if residue.standard_name == Some(StandardResidue::GLU)
-                        && residue.name.as_str() != "GLH"
-                    {
-                        if let Some(oe1) = residue.atom("OE1") {
-                            oxygens.push((oe1.pos, (c_idx, r_idx)));
-                        }
-                        if let Some(oe2) = residue.atom("OE2") {
-                            oxygens.push((oe2.pos, (c_idx, r_idx)));
-                        }
-                    }
-
-                    // C-terminal carboxylate (OXT)
-                    if residue.position == ResiduePosition::CTerminal {
-                        if let Some(oxt) = residue.atom("OXT") {
-                            oxygens.push((oxt.pos, (c_idx, r_idx)));
-                        }
-                    }
-
-                    oxygens
+                    atom_names
+                        .iter()
+                        .filter_map(move |&name| residue.atom(name).map(|a| (a.pos, idx)))
                 })
         })
         .collect();
@@ -420,15 +406,14 @@ fn determine_his_protonation(
     indices: Option<(usize, usize)>,
 ) -> String {
     if ph < HIS_SALT_BRIDGE_PH_MIN {
-        return "HIP".to_string();
+        return "HIP".into();
     }
 
-    if ph <= HIS_SALT_BRIDGE_PH_MAX && config.his_salt_bridge_protonation {
-        if let Some(grid) = carboxylate_grid {
-            if his_forms_salt_bridge(residue, grid, indices) {
-                return "HIP".to_string();
-            }
-        }
+    if ph <= HIS_SALT_BRIDGE_PH_MAX
+        && config.his_salt_bridge_protonation
+        && carboxylate_grid.is_some_and(|grid| his_forms_salt_bridge(residue, grid, indices))
+    {
+        return "HIP".into();
     }
 
     select_neutral_his(residue, config.his_strategy, acceptor_grid, indices)
