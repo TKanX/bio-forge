@@ -14,7 +14,7 @@ use crate::model::{
 };
 use crate::ops::error::Error;
 use crate::utils::parallel::*;
-use nalgebra::{Matrix3, Rotation3, Unit, Vector3};
+use nalgebra::{Matrix3, Rotation3, Vector3};
 use std::collections::HashSet;
 
 /// Standard C-O bond length in carboxylate groups (Å).
@@ -361,11 +361,11 @@ fn synthesize_terminal_atoms(residue: &mut Residue, status: &TerminalStatus) {
     }
 }
 
-/// Synthesizes OXT atom for C-terminal protein residues using local carboxyl geometry.
+/// Synthesizes OXT atom for C-terminal protein residues using local coordinate frame.
 ///
-/// The OXT position is calculated entirely in world-space using the actual positions
-/// of C, O, and CA atoms, ensuring correct carboxylate geometry regardless of global
-/// residue orientation.
+/// The algorithm constructs a local coordinate system centered at C with the z-axis
+/// pointing away from CA. The OXT is placed at 180° azimuthally opposite to O around
+/// this axis, with a polar angle calculated to achieve the target O-C-OXT angle (126°).
 ///
 /// # Arguments
 ///
@@ -380,18 +380,34 @@ fn synthesize_oxt(residue: &mut Residue) {
         _ => return,
     };
 
-    let v_co = (o - c).normalize();
-    let v_cca = (ca - c).normalize();
+    let v_c_ca = (ca - c).normalize();
+    let v_c_o = (o - c).normalize();
 
-    let normal = v_co.cross(&v_cca);
-    if normal.norm() < 1e-10 {
+    let z = -v_c_ca;
+
+    let o_proj = v_c_o - z * v_c_o.dot(&z);
+    if o_proj.norm() < 1e-10 {
         return;
     }
-    let normal = Unit::new_normalize(normal);
+    let x = o_proj.normalize();
 
-    let angle = CARBOXYL_OCO_ANGLE_DEG.to_radians();
-    let rotation = Rotation3::from_axis_angle(&normal, angle);
-    let oxt_direction = rotation * v_co;
+    let y = z.cross(&x);
+
+    let cos_theta_o = v_c_o.dot(&z);
+    let theta_o = cos_theta_o.clamp(-1.0, 1.0).acos();
+
+    let target_angle = CARBOXYL_OCO_ANGLE_DEG.to_radians();
+    let theta_oxt = (target_angle - theta_o).abs();
+
+    let phi_oxt = std::f64::consts::PI;
+    let sin_theta = theta_oxt.sin();
+    let cos_theta = theta_oxt.cos();
+
+    let oxt_local_x = sin_theta * phi_oxt.cos();
+    let oxt_local_y = sin_theta * phi_oxt.sin();
+    let oxt_local_z = cos_theta;
+
+    let oxt_direction = x * oxt_local_x + y * oxt_local_y + z * oxt_local_z;
 
     let oxt_pos = c + oxt_direction * CARBOXYL_CO_BOND_LENGTH;
 
