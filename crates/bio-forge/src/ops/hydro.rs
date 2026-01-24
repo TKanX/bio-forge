@@ -422,7 +422,7 @@ fn determine_his_protonation(
 /// Checks if a histidine residue forms a salt bridge with nearby carboxylate groups.
 ///
 /// A salt bridge is detected when either ND1 or NE2 nitrogen is within the threshold
-/// distance of any carboxylate oxygen (ASP OD1/OD2, GLU OE1/OE2, or C-terminal OXT).
+/// distance of any carboxylate oxygen (ASP OD1/OD2, GLU OE1/OE2, or C-terminal O/OXT).
 ///
 /// # Arguments
 ///
@@ -1175,6 +1175,33 @@ mod tests {
         structure
     }
 
+    fn structure_with_his_asp(his_ne2_pos: Point, asp_od1_pos: Point) -> Structure {
+        let mut his = residue_from_template("HID", StandardResidue::HIS, 1);
+        his.name = "HIS".into();
+        if let Some(ne2) = his.atom("NE2") {
+            let offset = his_ne2_pos - ne2.pos;
+            for atom in his.iter_atoms_mut() {
+                atom.pos += offset;
+            }
+        }
+
+        let mut asp = residue_from_template("ASP", StandardResidue::ASP, 2);
+        if let Some(od1) = asp.atom("OD1") {
+            let offset = asp_od1_pos - od1.pos;
+            for atom in asp.iter_atoms_mut() {
+                atom.pos += offset;
+            }
+        }
+
+        let mut chain = Chain::new("A");
+        chain.add_residue(his);
+        chain.add_residue(asp);
+
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+        structure
+    }
+
     fn n_terminal_residue(id: i32) -> Residue {
         let mut residue = residue_from_template("ALA", StandardResidue::ALA, id);
         residue.position = ResiduePosition::NTerminal;
@@ -1403,6 +1430,178 @@ mod tests {
                 None
             ),
             Some("HIP".to_string())
+        );
+    }
+
+    #[test]
+    fn his_forms_salt_bridge_detects_nearby_carboxylate() {
+        let his_ne2 = Point::origin();
+        let asp_od1 = Point::new(3.5, 0.0, 0.0);
+        let structure = structure_with_his_asp(his_ne2, asp_od1);
+
+        let grid = build_carboxylate_grid(&structure);
+        let his_residue = structure.find_residue("A", 1, None).unwrap();
+
+        assert!(
+            his_forms_salt_bridge(his_residue, &grid, Some((0, 0))),
+            "should detect salt bridge at 3.5Å"
+        );
+    }
+
+    #[test]
+    fn his_forms_salt_bridge_ignores_distant_carboxylate() {
+        let his_ne2 = Point::origin();
+        let asp_od1 = Point::new(5.0, 0.0, 0.0);
+        let structure = structure_with_his_asp(his_ne2, asp_od1);
+
+        let grid = build_carboxylate_grid(&structure);
+        let his_residue = structure.find_residue("A", 1, None).unwrap();
+
+        assert!(
+            !his_forms_salt_bridge(his_residue, &grid, Some((0, 0))),
+            "should not detect salt bridge at 5.0Å"
+        );
+    }
+
+    #[test]
+    fn determine_his_protonation_hip_on_salt_bridge_in_effective_range() {
+        let his_ne2 = Point::origin();
+        let asp_od1 = Point::new(3.0, 0.0, 0.0);
+        let structure = structure_with_his_asp(his_ne2, asp_od1);
+
+        let carboxylate_grid = build_carboxylate_grid(&structure);
+        let his_residue = structure.find_residue("A", 1, None).unwrap();
+
+        let config = HydroConfig {
+            target_ph: Some(7.0),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        let result = determine_his_protonation(
+            his_residue,
+            &config,
+            7.0,
+            None,
+            Some(&carboxylate_grid),
+            Some((0, 0)),
+        );
+
+        assert_eq!(
+            result, "HIP",
+            "salt bridge in effective pH range should yield HIP"
+        );
+    }
+
+    #[test]
+    fn determine_his_protonation_neutral_above_effective_range() {
+        let his_ne2 = Point::origin();
+        let asp_od1 = Point::new(3.0, 0.0, 0.0);
+        let structure = structure_with_his_asp(his_ne2, asp_od1);
+
+        let carboxylate_grid = build_carboxylate_grid(&structure);
+        let his_residue = structure.find_residue("A", 1, None).unwrap();
+
+        let config = HydroConfig {
+            target_ph: Some(9.0),
+            his_salt_bridge_protonation: true,
+            his_strategy: HisStrategy::DirectHIE,
+            ..HydroConfig::default()
+        };
+
+        let result = determine_his_protonation(
+            his_residue,
+            &config,
+            9.0,
+            None,
+            Some(&carboxylate_grid),
+            Some((0, 0)),
+        );
+
+        assert_eq!(result, "HIE", "salt bridge above pH 8.5 should be ignored");
+    }
+
+    #[test]
+    fn determine_his_protonation_neutral_when_detection_disabled() {
+        let his_ne2 = Point::origin();
+        let asp_od1 = Point::new(3.0, 0.0, 0.0);
+        let structure = structure_with_his_asp(his_ne2, asp_od1);
+
+        let carboxylate_grid = build_carboxylate_grid(&structure);
+        let his_residue = structure.find_residue("A", 1, None).unwrap();
+
+        let config = HydroConfig {
+            target_ph: Some(7.0),
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::DirectHID,
+            ..HydroConfig::default()
+        };
+
+        let result = determine_his_protonation(
+            his_residue,
+            &config,
+            7.0,
+            None,
+            Some(&carboxylate_grid),
+            Some((0, 0)),
+        );
+
+        assert_eq!(result, "HID", "detection disabled should use strategy");
+    }
+
+    #[test]
+    fn determine_protonation_state_uses_salt_bridge_without_ph() {
+        let his_ne2 = Point::origin();
+        let asp_od1 = Point::new(3.0, 0.0, 0.0);
+        let structure = structure_with_his_asp(his_ne2, asp_od1);
+
+        let carboxylate_grid = build_carboxylate_grid(&structure);
+        let his_residue = structure.find_residue("A", 1, None).unwrap();
+
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        let result = determine_protonation_state(
+            his_residue,
+            &config,
+            None,
+            Some(&carboxylate_grid),
+            Some((0, 0)),
+        );
+
+        assert_eq!(
+            result,
+            Some("HIP".to_string()),
+            "salt bridge without pH should yield HIP"
+        );
+    }
+
+    #[test]
+    fn build_carboxylate_grid_collects_asp_glu_cterm() {
+        let asp = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let glu = residue_from_template("GLU", StandardResidue::GLU, 2);
+        let mut ala = residue_from_template("ALA", StandardResidue::ALA, 3);
+        ala.position = ResiduePosition::CTerminal;
+        ala.add_atom(Atom::new("OXT", Element::O, Point::new(10.0, 0.0, 0.0)));
+
+        let mut chain = Chain::new("A");
+        chain.add_residue(asp);
+        chain.add_residue(glu);
+        chain.add_residue(ala);
+
+        let mut structure = Structure::new();
+        structure.add_chain(chain);
+
+        let grid = build_carboxylate_grid(&structure);
+
+        let all_neighbors: Vec<_> = grid.neighbors(&Point::origin(), 100.0).exact().collect();
+        assert_eq!(
+            all_neighbors.len(),
+            6,
+            "should collect 6 carboxylate oxygens (ASP OD1/OD2 + GLU OE1/OE2 + C-term O/OXT)"
         );
     }
 
