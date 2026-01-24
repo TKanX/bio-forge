@@ -26,6 +26,12 @@ const N_TERM_PKA: f64 = 8.0;
 const C_TERM_PKA: f64 = 3.1;
 /// Henderson–Hasselbalch breakpoint for the second dissociation of terminal phosphate.
 const PHOSPHATE_PKA2: f64 = 6.5;
+/// Minimum pH at which HIS salt bridges can stabilize HIP (below this, HIS is always HIP).
+const HIS_SALT_BRIDGE_PH_MIN: f64 = 6.0;
+/// Maximum pH at which HIS salt bridges can stabilize HIP (above this, salt bridges ineffective).
+const HIS_SALT_BRIDGE_PH_MAX: f64 = 8.5;
+/// Maximum distance (Å) for HIS–carboxylate salt bridge detection.
+const SALT_BRIDGE_THRESHOLD: f64 = 4.0;
 /// Standard sp³ tetrahedral bond angle (degrees).
 const SP3_ANGLE: f64 = 109.5;
 /// Standard N-H bond length (Å).
@@ -37,8 +43,9 @@ const COOH_BOND_LENGTH: f64 = 0.97;
 
 /// Parameters controlling hydrogen addition behavior.
 ///
-/// `HydroConfig` can target a specific solution pH, remove pre-existing hydrogens, and
-/// choose how neutral histidine tautomers are assigned.
+/// `HydroConfig` can target a specific solution pH, remove pre-existing hydrogens,
+/// choose how neutral histidine tautomers are assigned, and optionally detect salt bridges
+/// between histidine and nearby carboxylate groups.
 #[derive(Debug, Clone)]
 pub struct HydroConfig {
     /// Optional solvent pH value used for titration decisions.
@@ -47,16 +54,20 @@ pub struct HydroConfig {
     pub remove_existing_h: bool,
     /// Strategy for setting neutral histidine tautomer labels.
     pub his_strategy: HisStrategy,
+    /// Enable salt bridge-driven HIS protonation.
+    pub his_salt_bridge_protonation: bool,
 }
 
 impl Default for HydroConfig {
-    /// Provides biologically reasonable defaults (physiological pH, removal of old hydrogens,
-    /// and hydrogen-bond-aware histidine selection).
+    /// Provides biologically reasonable defaults: no explicit pH (based on residue names),
+    /// removal of old hydrogens, hydrogen-bond-aware histidine selection, and salt bridge
+    /// protonation enabled.
     fn default() -> Self {
         Self {
             target_ph: None,
             remove_existing_h: true,
             his_strategy: HisStrategy::HbNetwork,
+            his_salt_bridge_protonation: true,
         }
     }
 }
@@ -76,14 +87,17 @@ pub enum HisStrategy {
 
 /// Adds hydrogens to all standard residues in-place, updating protonation states when needed.
 ///
-/// Disulfide bridges are detected prior to titration and preserved by relabeling cysteines to
-/// `CYX`. Residues lacking required anchor atoms will trigger descriptive errors so upstream
-/// cleanup steps can correct the issues.
+/// The pipeline executes in a single O(N) pass:
+/// 1. Disulfide bridges are detected and cysteines relabeled to `CYX`.
+/// 2. When salt bridge protonation is enabled, a spatial grid of carboxylate oxygens is built.
+/// 3. Each residue's protonation state is determined (pH-driven, salt-bridge and H-bond network-aware for HIS).
+/// 4. Hydrogens are reconstructed from template geometry.
 ///
 /// # Arguments
 ///
 /// * `structure` - Mutable structure whose residues will be protonated and hydrated.
-/// * `config` - Hydrogenation configuration, including pH target and histidine strategy.
+/// * `config` - Hydrogenation configuration, including pH target, histidine strategy, and
+///   salt bridge protonation toggle.
 ///
 /// # Returns
 ///
@@ -98,6 +112,12 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
 
     let acceptor_grid = if config.his_strategy == HisStrategy::HbNetwork {
         Some(build_acceptor_grid(structure))
+    } else {
+        None
+    };
+
+    let carboxylate_grid = if config.his_salt_bridge_protonation {
+        Some(build_carboxylate_grid(structure))
     } else {
         None
     };
@@ -118,6 +138,7 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
                         residue,
                         config,
                         acceptor_grid.as_ref(),
+                        carboxylate_grid.as_ref(),
                         Some((c_idx, r_idx)),
                     );
 
@@ -132,122 +153,6 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
                     construct_hydrogens_for_residue(residue, config)
                 })
         })
-}
-
-/// Builds a spatial grid of all nitrogen and oxygen atoms in the structure.
-///
-/// # Arguments
-///
-/// * `structure` - Structure from which to extract acceptor atoms.
-///
-/// # Returns
-///
-/// A `Grid` containing positions and residue indices of all N, O, and F atoms.
-fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
-    let atoms: Vec<(Point, (usize, usize))> = structure
-        .iter_chains()
-        .enumerate()
-        .flat_map(|(c_idx, chain)| {
-            chain
-                .iter_residues()
-                .enumerate()
-                .flat_map(move |(r_idx, residue)| {
-                    residue
-                        .iter_atoms()
-                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
-                        .map(move |a| (a.pos, (c_idx, r_idx)))
-                })
-        })
-        .collect();
-    Grid::new(atoms, 3.5)
-}
-
-/// Predicts the protonation-induced residue rename for a given polymer residue.
-///
-/// Applies residue-specific pKa thresholds, handles histidine tautomer selection, and
-/// respects previously tagged disulfide cysteines.
-///
-/// # Arguments
-///
-/// * `residue` - Residue under evaluation.
-/// * `config` - Hydrogenation configuration containing pH and histidine options.
-/// * `grid` - Optional grid of acceptor atoms for HIS network analysis.
-/// * `indices` - Optional (chain_idx, res_idx) to exclude self-interactions.
-///
-/// # Returns
-///
-/// `Some(new_name)` when the residue should be relabeled; otherwise `None`.
-fn determine_protonation_state(
-    residue: &Residue,
-    config: &HydroConfig,
-    grid: Option<&Grid<(usize, usize)>>,
-    indices: Option<(usize, usize)>,
-) -> Option<String> {
-    let std = residue.standard_name?;
-
-    if std == StandardResidue::CYS && residue.name == "CYX" {
-        return None;
-    }
-
-    if let Some(ph) = config.target_ph {
-        return match std {
-            StandardResidue::ASP => Some(if ph < 3.9 {
-                "ASH".to_string()
-            } else {
-                "ASP".to_string()
-            }),
-            StandardResidue::GLU => Some(if ph < 4.2 {
-                "GLH".to_string()
-            } else {
-                "GLU".to_string()
-            }),
-            StandardResidue::LYS => Some(if ph > 10.5 {
-                "LYN".to_string()
-            } else {
-                "LYS".to_string()
-            }),
-            StandardResidue::ARG => Some(if ph > 12.5 {
-                "ARN".to_string()
-            } else {
-                "ARG".to_string()
-            }),
-            StandardResidue::CYS => Some(if ph > 8.3 {
-                "CYM".to_string()
-            } else {
-                "CYS".to_string()
-            }),
-            StandardResidue::TYR => Some(if ph > 10.0 {
-                "TYM".to_string()
-            } else {
-                "TYR".to_string()
-            }),
-            StandardResidue::HIS => {
-                if ph < 6.0 {
-                    Some("HIP".to_string())
-                } else {
-                    Some(select_neutral_his(
-                        residue,
-                        config.his_strategy,
-                        grid,
-                        indices,
-                    ))
-                }
-            }
-            _ => None,
-        };
-    }
-
-    if std == StandardResidue::HIS && matches!(residue.name.as_str(), "HIS" | "HID" | "HIE" | "HIP")
-    {
-        return Some(select_neutral_his(
-            residue,
-            config.his_strategy,
-            grid,
-            indices,
-        ));
-    }
-
-    None
 }
 
 /// Identifies cysteine pairs forming disulfide bonds and renames them to `CYX`.
@@ -312,6 +217,255 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
                     }
                 });
         });
+}
+
+/// Builds a spatial grid of all nitrogen and oxygen atoms in the structure.
+///
+/// # Arguments
+///
+/// * `structure` - Structure from which to extract acceptor atoms.
+///
+/// # Returns
+///
+/// A `Grid` containing positions and residue indices of all N, O, and F atoms.
+fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
+    let atoms: Vec<(Point, (usize, usize))> = structure
+        .iter_chains()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .iter_residues()
+                .enumerate()
+                .flat_map(move |(r_idx, residue)| {
+                    residue
+                        .iter_atoms()
+                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
+                        .map(move |a| (a.pos, (c_idx, r_idx)))
+                })
+        })
+        .collect();
+    Grid::new(atoms, 3.5)
+}
+
+/// Builds a spatial grid of carboxylate oxygen atoms for salt bridge detection.
+///
+/// # Arguments
+///
+/// * `structure` - Structure from which to extract carboxylate oxygens.
+///
+/// # Returns
+///
+/// A `Grid` containing positions and residue indices of carboxylate oxygen atoms.
+fn build_carboxylate_grid(structure: &Structure) -> Grid<(usize, usize)> {
+    let atoms: Vec<(Point, (usize, usize))> = structure
+        .iter_chains()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .iter_residues()
+                .enumerate()
+                .flat_map(move |(r_idx, residue)| {
+                    let mut oxygens = Vec::new();
+
+                    // ASP carboxylate (only deprotonated ASP, not ASH)
+                    if residue.standard_name == Some(StandardResidue::ASP)
+                        && residue.name.as_str() != "ASH"
+                    {
+                        if let Some(od1) = residue.atom("OD1") {
+                            oxygens.push((od1.pos, (c_idx, r_idx)));
+                        }
+                        if let Some(od2) = residue.atom("OD2") {
+                            oxygens.push((od2.pos, (c_idx, r_idx)));
+                        }
+                    }
+
+                    // GLU carboxylate (only deprotonated GLU, not GLH)
+                    if residue.standard_name == Some(StandardResidue::GLU)
+                        && residue.name.as_str() != "GLH"
+                    {
+                        if let Some(oe1) = residue.atom("OE1") {
+                            oxygens.push((oe1.pos, (c_idx, r_idx)));
+                        }
+                        if let Some(oe2) = residue.atom("OE2") {
+                            oxygens.push((oe2.pos, (c_idx, r_idx)));
+                        }
+                    }
+
+                    // C-terminal carboxylate (OXT)
+                    if residue.position == ResiduePosition::CTerminal {
+                        if let Some(oxt) = residue.atom("OXT") {
+                            oxygens.push((oxt.pos, (c_idx, r_idx)));
+                        }
+                    }
+
+                    oxygens
+                })
+        })
+        .collect();
+    Grid::new(atoms, SALT_BRIDGE_THRESHOLD + 0.5)
+}
+
+/// Predicts the protonation-induced residue rename for a given polymer residue.
+///
+/// Applies residue-specific pKa thresholds, handles histidine tautomer selection with
+/// optional salt bridge detection, and respects previously tagged disulfide cysteines.
+///
+/// # Arguments
+///
+/// * `residue` - Residue under evaluation.
+/// * `config` - Hydrogenation configuration containing pH and histidine options.
+/// * `acceptor_grid` - Optional grid of acceptor atoms for HIS network analysis.
+/// * `carboxylate_grid` - Optional grid of carboxylate oxygens for salt bridge detection.
+/// * `indices` - Optional (chain_idx, res_idx) to exclude self-interactions.
+///
+/// # Returns
+///
+/// `Some(new_name)` when the residue should be relabeled; otherwise `None`.
+fn determine_protonation_state(
+    residue: &Residue,
+    config: &HydroConfig,
+    acceptor_grid: Option<&Grid<(usize, usize)>>,
+    carboxylate_grid: Option<&Grid<(usize, usize)>>,
+    indices: Option<(usize, usize)>,
+) -> Option<String> {
+    let std = residue.standard_name?;
+
+    if std == StandardResidue::CYS && residue.name == "CYX" {
+        return None;
+    }
+
+    if let Some(ph) = config.target_ph {
+        return match std {
+            StandardResidue::ASP => Some(if ph < 3.9 {
+                "ASH".to_string()
+            } else {
+                "ASP".to_string()
+            }),
+            StandardResidue::GLU => Some(if ph < 4.2 {
+                "GLH".to_string()
+            } else {
+                "GLU".to_string()
+            }),
+            StandardResidue::LYS => Some(if ph > 10.5 {
+                "LYN".to_string()
+            } else {
+                "LYS".to_string()
+            }),
+            StandardResidue::ARG => Some(if ph > 12.5 {
+                "ARN".to_string()
+            } else {
+                "ARG".to_string()
+            }),
+            StandardResidue::CYS => Some(if ph > 8.3 {
+                "CYM".to_string()
+            } else {
+                "CYS".to_string()
+            }),
+            StandardResidue::TYR => Some(if ph > 10.0 {
+                "TYM".to_string()
+            } else {
+                "TYR".to_string()
+            }),
+            StandardResidue::HIS => Some(determine_his_protonation(
+                residue,
+                config,
+                ph,
+                acceptor_grid,
+                carboxylate_grid,
+                indices,
+            )),
+            _ => None,
+        };
+    }
+
+    if std == StandardResidue::HIS {
+        return Some(determine_his_protonation(
+            residue,
+            config,
+            7.4, // Assume physiological pH when not specified
+            acceptor_grid,
+            carboxylate_grid,
+            indices,
+        ));
+    }
+
+    None
+}
+
+/// Determines the protonation state of a histidine residue considering pH and salt bridges.
+///
+/// Decision logic:
+/// - pH < 6.0: Always HIP (pH-driven protonation).
+/// - pH in [6.0, 8.5] with salt bridge detected: HIP (stabilized by ionic interaction).
+/// - pH > 8.5 or no salt bridge: Neutral tautomer (HID/HIE) via strategy.
+///
+/// # Arguments
+///
+/// * `residue` - Histidine residue to evaluate.
+/// * `config` - Hydrogenation configuration.
+/// * `ph` - Current pH value.
+/// * `acceptor_grid` - Grid for H-bond network analysis.
+/// * `carboxylate_grid` - Grid for salt bridge detection.
+/// * `indices` - Self-exclusion indices.
+///
+/// # Returns
+///
+/// The appropriate histidine residue name (`"HIE"`, `"HID"`, or `"HIP"`).
+fn determine_his_protonation(
+    residue: &Residue,
+    config: &HydroConfig,
+    ph: f64,
+    acceptor_grid: Option<&Grid<(usize, usize)>>,
+    carboxylate_grid: Option<&Grid<(usize, usize)>>,
+    indices: Option<(usize, usize)>,
+) -> String {
+    if ph < HIS_SALT_BRIDGE_PH_MIN {
+        return "HIP".to_string();
+    }
+
+    if ph <= HIS_SALT_BRIDGE_PH_MAX && config.his_salt_bridge_protonation {
+        if let Some(grid) = carboxylate_grid {
+            if his_forms_salt_bridge(residue, grid, indices) {
+                return "HIP".to_string();
+            }
+        }
+    }
+
+    select_neutral_his(residue, config.his_strategy, acceptor_grid, indices)
+}
+
+/// Checks if a histidine residue forms a salt bridge with nearby carboxylate groups.
+///
+/// A salt bridge is detected when either ND1 or NE2 nitrogen is within the threshold
+/// distance of any carboxylate oxygen (ASP OD1/OD2, GLU OE1/OE2, or C-terminal OXT).
+///
+/// # Arguments
+///
+/// * `residue` - Histidine residue to check.
+/// * `grid` - Spatial grid of carboxylate oxygen positions.
+/// * `indices` - Self-exclusion indices to avoid false positives.
+///
+/// # Returns
+///
+/// `true` if a salt bridge is detected, `false` otherwise.
+fn his_forms_salt_bridge(
+    residue: &Residue,
+    grid: &Grid<(usize, usize)>,
+    indices: Option<(usize, usize)>,
+) -> bool {
+    let self_idx = indices.unwrap_or((usize::MAX, usize::MAX));
+
+    for n_name in ["ND1", "NE2"] {
+        if let Some(n_atom) = residue.atom(n_name) {
+            for (_, &neighbor_idx) in grid.neighbors(&n_atom.pos, SALT_BRIDGE_THRESHOLD).exact() {
+                if neighbor_idx != self_idx {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 /// Selects a neutral histidine tautomer using the configured strategy.
