@@ -18,9 +18,6 @@ pub struct HydroArgs {
     /// Strategy for neutral histidine tautomer assignment.
     #[arg(long = "his", value_enum, default_value = "network")]
     pub his: HistidineStrategy,
-    /// Disable histidine salt bridge protonation.
-    #[arg(long = "no-salt-bridges")]
-    pub no_salt_bridges: bool,
 }
 
 /// CLI exposure of [`HisStrategy`].
@@ -54,7 +51,6 @@ pub fn run(structure: &mut Structure, args: &HydroArgs) -> Result<()> {
             target_ph: args.ph,
             remove_existing_h: !args.no_strip,
             his_strategy: args.his.into(),
-            his_salt_bridge_protonation: !args.no_salt_bridges,
         };
 
         add_hydrogens(structure, &config).context("Failed to add hydrogens")
