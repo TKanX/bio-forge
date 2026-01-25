@@ -145,13 +145,13 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
 /// A `Grid` containing positions and residue indices of all N, O, and F atoms.
 fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
     let atoms: Vec<(Point, (usize, usize))> = structure
-        .iter_chains()
+        .par_chains()
         .enumerate()
         .flat_map(|(c_idx, chain)| {
             chain
-                .iter_residues()
+                .par_residues()
                 .enumerate()
-                .flat_map(move |(r_idx, residue)| {
+                .flat_map_iter(move |(r_idx, residue)| {
                     residue
                         .iter_atoms()
                         .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
