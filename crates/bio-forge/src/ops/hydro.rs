@@ -515,3 +515,67 @@ fn calculate_h_bond_score(
 
     score
 }
+
+/// Identifies cysteine pairs forming disulfide bonds and renames them to CYX.
+///
+/// # Arguments
+///
+/// * `structure` - Mutable structure to analyze and modify.
+fn mark_disulfide_bridges(structure: &mut Structure) {
+    let cys_sulfurs: Vec<(Point, (usize, usize))> = structure
+        .par_chains_mut()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .par_residues_mut()
+                .enumerate()
+                .filter_map(move |(r_idx, residue)| {
+                    if matches!(residue.standard_name, Some(StandardResidue::CYS)) {
+                        residue.atom("SG").map(|sg| (sg.pos, (c_idx, r_idx)))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect();
+
+    if cys_sulfurs.len() < 2 {
+        return;
+    }
+
+    let grid = Grid::new(cys_sulfurs.clone(), DISULFIDE_SG_THRESHOLD + 0.5);
+
+    let disulfide_residues: HashSet<(usize, usize)> = cys_sulfurs
+        .par_iter()
+        .flat_map_iter(|(pos, (c_idx, r_idx))| {
+            grid.neighbors(pos, DISULFIDE_SG_THRESHOLD)
+                .exact()
+                .filter_map(move |(_, &(neighbor_c, neighbor_r))| {
+                    if *c_idx == neighbor_c && *r_idx == neighbor_r {
+                        None
+                    } else {
+                        Some([(*c_idx, *r_idx), (neighbor_c, neighbor_r)])
+                    }
+                })
+        })
+        .flatten()
+        .collect();
+
+    if disulfide_residues.is_empty() {
+        return;
+    }
+
+    structure
+        .par_chains_mut()
+        .enumerate()
+        .for_each(|(c_idx, chain)| {
+            chain
+                .par_residues_mut()
+                .enumerate()
+                .for_each(|(r_idx, residue)| {
+                    if disulfide_residues.contains(&(c_idx, r_idx)) && residue.name != "CYX" {
+                        residue.name = "CYX".into();
+                    }
+                });
+        });
+}
