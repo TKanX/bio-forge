@@ -2221,4 +2221,99 @@ mod tests {
             "H1-N-H3 angle {h1_n_h3_angle:.1}° should be ~{SP3_ANGLE}°"
         );
     }
+
+    #[test]
+    fn c_terminal_defaults_to_deprotonated_without_ph() {
+        let residue = c_terminal_residue(51);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 51, None).unwrap();
+        assert!(
+            !residue.has_atom("HOXT"),
+            "C-term should be deprotonated at default pH 7.0"
+        );
+    }
+
+    #[test]
+    fn c_terminal_protonates_under_acidic_ph() {
+        let residue = c_terminal_residue(50);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(2.5),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 50, None).unwrap();
+        assert!(
+            residue.has_atom("HOXT"),
+            "C-term should be protonated below pKa 3.1"
+        );
+    }
+
+    #[test]
+    fn c_terminal_remains_deprotonated_at_physiological_ph() {
+        let residue = c_terminal_residue(51);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 51, None).unwrap();
+        assert!(
+            !residue.has_atom("HOXT"),
+            "C-term should be deprotonated at pH 7.4"
+        );
+    }
+
+    #[test]
+    fn c_terminal_hoxt_has_tetrahedral_bond_length() {
+        let residue = c_terminal_residue(99);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(2.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 99, None).unwrap();
+        let oxt = residue.atom("OXT").expect("OXT").pos;
+        let hoxt = residue.atom("HOXT").expect("HOXT").pos;
+
+        let oxt_hoxt_dist = distance(oxt, hoxt);
+        assert!(
+            (oxt_hoxt_dist - COOH_BOND_LENGTH).abs() < 0.1,
+            "OXT-HOXT distance {oxt_hoxt_dist:.3} should be ~{COOH_BOND_LENGTH} Å"
+        );
+    }
+
+    #[test]
+    fn c_terminal_hoxt_has_tetrahedral_bond_angle() {
+        let residue = c_terminal_residue(99);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(2.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 99, None).unwrap();
+        let c = residue.atom("C").expect("C").pos;
+        let oxt = residue.atom("OXT").expect("OXT").pos;
+        let hoxt = residue.atom("HOXT").expect("HOXT").pos;
+
+        let c_oxt_hoxt_angle = angle_deg(c, oxt, hoxt);
+        assert!(
+            (c_oxt_hoxt_angle - SP3_ANGLE).abs() < 5.0,
+            "C-OXT-HOXT angle {c_oxt_hoxt_angle:.1}° should be ~{SP3_ANGLE}°"
+        );
+    }
 }
