@@ -692,3 +692,27 @@ fn construct_hydrogens_for_residue(
 
     Ok(())
 }
+
+/// Returns the effective pH used for terminal protonation state decisions.
+#[inline]
+fn effective_terminal_ph(target_ph: Option<f64>) -> f64 {
+    target_ph.unwrap_or(DEFAULT_TERMINAL_PH)
+}
+
+/// Determines if a C-terminus should be considered deprotonated (COO⁻).
+#[inline]
+fn c_terminus_is_deprotonated(target_ph: Option<f64>) -> bool {
+    effective_terminal_ph(target_ph) > C_TERM_PKA
+}
+
+/// Evaluates whether an N-terminus should be protonated (NH₃⁺).
+#[inline]
+fn n_term_is_protonated(target_ph: Option<f64>) -> bool {
+    effective_terminal_ph(target_ph) < N_TERM_PKA
+}
+
+/// Evaluates whether a C-terminus should be protonated (COOH).
+#[inline]
+fn c_term_is_protonated(target_ph: Option<f64>) -> bool {
+    effective_terminal_ph(target_ph) < C_TERM_PKA
+}
