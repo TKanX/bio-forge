@@ -96,7 +96,7 @@ export function Collapsible({
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
           >
-            <div className="px-4 pb-4 pt-1 border-t border-border/50">
+            <div className="px-4 pb-4 pt-3 border-t border-border/50">
               {children}
             </div>
           </motion.div>
