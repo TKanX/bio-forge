@@ -2517,4 +2517,43 @@ mod tests {
         assert!(!c_terminus_is_deprotonated(Some(2.0)));
         assert!(!c_terminus_is_deprotonated(Some(3.0)));
     }
+
+    #[test]
+    fn acceptor_grid_includes_nitrogen_atoms() {
+        let residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_acceptor_grid(&structure);
+        let ala = structure.find_residue("A", 1, None).unwrap();
+        let n = ala.atom("N").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&n, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "N should be in acceptor grid");
+    }
+
+    #[test]
+    fn acceptor_grid_includes_oxygen_atoms() {
+        let residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_acceptor_grid(&structure);
+        let ala = structure.find_residue("A", 1, None).unwrap();
+        let o = ala.atom("O").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&o, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "O should be in acceptor grid");
+    }
+
+    #[test]
+    fn acceptor_grid_excludes_carbon_atoms() {
+        let residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_acceptor_grid(&structure);
+        let ala = structure.find_residue("A", 1, None).unwrap();
+        let ca = ala.atom("CA").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&ca, 0.1).exact().collect();
+        assert!(neighbors.is_empty(), "CA should NOT be in acceptor grid");
+    }
 }
