@@ -608,3 +608,87 @@ fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
 
     Grid::new(atoms, 3.5)
 }
+
+/// Rebuilds hydrogens for a single residue using template geometry and terminal rules.
+///
+/// # Arguments
+///
+/// * `residue` - Mutable residue to which hydrogens will be added.
+/// * `config` - Hydrogenation configuration controlling pH and options.
+///
+/// # Returns
+///
+/// `Ok(())` when hydrogen construction succeeds.
+///
+/// # Errors
+///
+/// Returns [`Error::MissingInternalTemplate`] when no template is found or
+/// [`Error::IncompleteResidueForHydro`] when required anchor atoms are missing.
+fn construct_hydrogens_for_residue(
+    residue: &mut Residue,
+    config: &HydroConfig,
+) -> Result<(), Error> {
+    let template_name = residue.name.clone();
+
+    let template_view =
+        db::get_template(&template_name).ok_or_else(|| Error::MissingInternalTemplate {
+            res_name: template_name.to_string(),
+        })?;
+
+    let existing_atoms: HashSet<String> =
+        residue.atoms().iter().map(|a| a.name.to_string()).collect();
+
+    let rotation_override = if residue.standard_name == Some(StandardResidue::HOH) {
+        let mut rng = rand::rng();
+        Some(
+            Rotation3::from_axis_angle(
+                &Vector3::y_axis(),
+                rng.random_range(0.0..std::f64::consts::TAU),
+            ) * Rotation3::from_axis_angle(
+                &Vector3::x_axis(),
+                rng.random_range(0.0..std::f64::consts::TAU),
+            ),
+        )
+    } else {
+        None
+    };
+
+    for (h_name, h_tmpl_pos, anchors_iter) in template_view.hydrogens() {
+        if existing_atoms.contains(h_name) {
+            continue;
+        }
+
+        let anchors: Vec<&str> = anchors_iter.collect();
+        if let Ok(pos) = reconstruct_geometry(residue, h_tmpl_pos, &anchors, rotation_override) {
+            residue.add_atom(Atom::new(h_name, Element::H, pos));
+        } else {
+            return Err(Error::incomplete_for_hydro(
+                &*residue.name,
+                residue.id,
+                anchors.first().copied().unwrap_or("?"),
+            ));
+        }
+    }
+
+    match residue.position {
+        ResiduePosition::NTerminal if residue.standard_name.is_some_and(|s| s.is_protein()) => {
+            construct_n_term_hydrogens(residue, n_term_is_protonated(config.target_ph))?;
+        }
+        ResiduePosition::CTerminal if residue.standard_name.is_some_and(|s| s.is_protein()) => {
+            construct_c_term_hydrogen(residue, c_term_is_protonated(config.target_ph))?;
+        }
+        ResiduePosition::ThreePrime if residue.standard_name.is_some_and(|s| s.is_nucleic()) => {
+            construct_3_prime_hydrogen(residue)?;
+        }
+        ResiduePosition::FivePrime if residue.standard_name.is_some_and(|s| s.is_nucleic()) => {
+            if residue.has_atom("P") {
+                construct_5_prime_phosphate_hydrogens(residue, config.target_ph)?;
+            } else if residue.has_atom("O5'") {
+                construct_5_prime_hydrogen(residue)?;
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
