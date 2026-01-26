@@ -579,3 +579,32 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
                 });
         });
 }
+
+/// Builds a spatial grid of all nitrogen and oxygen atoms for H-bond network analysis.
+///
+/// # Arguments
+///
+/// * `structure` - Structure from which to extract acceptor atoms.
+///
+/// # Returns
+///
+/// Spatial grid of acceptor atom (N, O, F) positions mapped to (chain_idx, residue_idx).
+fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
+    let atoms: Vec<(Point, (usize, usize))> = structure
+        .iter_chains()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .iter_residues()
+                .enumerate()
+                .flat_map(move |(r_idx, residue)| {
+                    residue
+                        .iter_atoms()
+                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
+                        .map(move |a| (a.pos, (c_idx, r_idx)))
+                })
+        })
+        .collect();
+
+    Grid::new(atoms, 3.5)
+}
