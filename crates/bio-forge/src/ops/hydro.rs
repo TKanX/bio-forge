@@ -1964,4 +1964,61 @@ mod tests {
             "strategy should apply when salt bridge not found"
         );
     }
+
+    #[test]
+    fn add_hydrogens_populates_internal_lysine_side_chain() {
+        let mut residue = residue_from_template("LYS", StandardResidue::LYS, 10);
+        residue.add_atom(Atom::new("FAKE", Element::H, Point::origin()));
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 10, None).unwrap();
+        assert!(residue.has_atom("HZ1"));
+        assert!(residue.has_atom("HZ2"));
+        assert!(residue.has_atom("HZ3"));
+        assert!(
+            !residue.has_atom("FAKE"),
+            "existing H should be removed by default"
+        );
+    }
+
+    #[test]
+    fn add_hydrogens_keeps_existing_h_when_configured() {
+        let mut residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        residue.add_atom(Atom::new("HX", Element::H, Point::origin()));
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            remove_existing_h: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 1, None).unwrap();
+        assert!(
+            residue.has_atom("HX"),
+            "existing H should be kept when configured"
+        );
+    }
+
+    #[test]
+    fn construct_hydrogens_errors_when_anchor_missing() {
+        let template = db::get_template("ALA").expect("template ALA");
+        let mut residue = Residue::new(
+            20,
+            None,
+            "ALA",
+            Some(StandardResidue::ALA),
+            ResidueCategory::Standard,
+        );
+        residue.position = ResiduePosition::Internal;
+
+        let (name, element, pos) = template.heavy_atoms().next().unwrap();
+        residue.add_atom(Atom::new(name, element, pos));
+
+        let err = construct_hydrogens_for_residue(&mut residue, &HydroConfig::default())
+            .expect_err("should fail");
+        assert!(matches!(err, Error::IncompleteResidueForHydro { .. }));
+    }
 }
