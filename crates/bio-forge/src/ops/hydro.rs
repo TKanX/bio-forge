@@ -912,3 +912,37 @@ fn construct_5_prime_phosphate_hydrogens(
     residue.add_atom(Atom::new("HOP3", Element::H, h_pos));
     Ok(())
 }
+
+/// Aligns template coordinates to residue anchors to predict a hydrogen position.
+fn reconstruct_geometry(
+    residue: &Residue,
+    target_tmpl_pos: Point,
+    anchor_names: &[&str],
+    rotation_override: Option<Rotation3<f64>>,
+) -> Result<Point, ()> {
+    let template_view = db::get_template(&residue.name).ok_or(())?;
+
+    let mut residue_pts = Vec::new();
+    let mut template_pts = Vec::new();
+
+    for name in anchor_names {
+        let r_atom = residue.atom(name).ok_or(())?;
+        residue_pts.push(r_atom.pos);
+
+        let t_pos = template_view
+            .heavy_atoms()
+            .find(|(n, _, _)| n == name)
+            .map(|(_, _, p)| p)
+            .ok_or(())?;
+        template_pts.push(t_pos);
+    }
+
+    let (mut rot, mut trans) = calculate_transform(&residue_pts, &template_pts).ok_or(())?;
+
+    if let (Some(override_rot), 1) = (rotation_override, anchor_names.len()) {
+        rot = override_rot.into_inner();
+        trans = residue_pts[0].coords - rot * template_pts[0].coords;
+    }
+
+    Ok(rot * target_tmpl_pos + trans)
+}
