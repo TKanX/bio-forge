@@ -85,21 +85,49 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    ScanResidues --> MarkDisulfide
-    MarkDisulfide --> Protonation
-    Protonation --> StripOldH
-    StripOldH --> GeometryBuild
-    GeometryBuild --> TerminalAdjust
-    TerminalAdjust --> EndHydro
+    MarkDisulfide[Mark Disulfide Bridges]
+    BuildAcceptor{HbNetwork + pH?}
+    Phase1[Phase 1: Non-HIS Protonation]
+    SkipPhase1{pH specified?}
+    BuildCOO{Salt Bridge?}
+    Phase2[Phase 2: HIS Protonation]
+    Phase3[Phase 3: Add Hydrogens]
+
+    MarkDisulfide --> BuildAcceptor
+    BuildAcceptor -->|Yes| AcceptorGrid[Build Acceptor Grid]
+    BuildAcceptor -->|No| SkipPhase1
+    AcceptorGrid --> SkipPhase1
+
+    SkipPhase1 -->|Yes| Phase1
+    SkipPhase1 -->|No| BuildCOO
+    Phase1 --> BuildCOO
+
+    BuildCOO -->|Yes| COOGrid[Build COO⁻ Grid]
+    BuildCOO -->|No| Phase2
+    COOGrid --> Phase2
+
+    Phase2 --> Phase3
+    Phase3 --> EndHydro[Complete]
 ```
 
-- **ScanResidues** – Gathers standard residues and tracks their chain indices for ordered processing.
-- **MarkDisulfide** – Detects SG–SG pairs below the disulfide threshold and renames residues to `CYX`.
-- **Protonation** – Applies pH-driven heuristics plus HIS strategy selection to decide residue names.
-- **StripOldH** – Removes existing hydrogens if `remove_existing_h` is enabled.
-- **GeometryBuild** – Reconstructs hydrogens using template anchors, calling `reconstruct_geometry` and `calculate_transform` internally.
-- **TerminalAdjust** – Adds terminal hydrogens (N-term H1/H2/H3, C-term HOXT, nucleic 5' HO5' or pH-dependent phosphate HOP3, nucleic 3' HO3') respecting protonation states.
-- **EndHydro** – Structure now contains geometrically sound hydrogens.
+- **Disulfide Detection** – Identifies CYS pairs forming S-S bonds (distance < 2.2Å) and relabels them to `CYX` to prevent thiol hydrogenation.
+- **Acceptor Grid** (Conditional) – Built only when `HisStrategy::HbNetwork` is used AND `target_ph` is specified. Contains all N/O/F atoms for H-bond scoring.
+- **Phase 1: Non-HIS Protonation** (Conditional) – Skipped entirely when `target_ph` is `None`. Applies pKa-based titration rules to titratable residues (ASP, GLU, LYS, ARG, CYS, TYR) in parallel. Preserves user-specified names when no pH is given.
+- **COO⁻ Grid Construction** (Conditional) – Built only when `his_salt_bridge_protonation` is enabled. Contains carboxylate oxygen atoms from:
+  - ASP⁻ (deprotonated aspartate): OD1, OD2
+  - GLU⁻ (deprotonated glutamate): OE1, OE2
+  - C-terminal COO⁻ (when pH ≥ 3.1): O, OXT
+- **Phase 2: HIS Protonation** – Determines histidine protonation state via priority logic:
+  - **Priority 1**: pH < 6.0 → HIP (acidic conditions)
+  - **Priority 2**: No pH AND no salt bridge → preserve user name
+  - **Priority 3**: Salt bridge detected (ND1 or NE2 within 4.0Å of COO⁻) → HIP
+  - **Priority 4**: No pH → preserve user name (salt bridge didn't trigger)
+  - **Priority 5**: Apply HisStrategy (DirectHID/DirectHIE/Random/HbNetwork)
+- **Phase 3: Hydrogen Addition** – Adds hydrogen atoms to all residues based on their final protonation states. Reconstructs geometry using template anchors and Kabsch alignment. Handles terminal-specific hydrogens:
+  - **N-terminal**: H1/H2/H3 (protonated) or H1/H2 (deprotonated, pH > 8.0)
+  - **C-terminal**: HOXT (protonated, pH < 3.1) or no HOXT (deprotonated)
+  - **5'-terminal nucleic**: HO5' (no phosphate) or HOP3 (phosphate + pH < 6.5)
+  - **3'-terminal nucleic**: HO3'
 
 ### 3.4 Solvate Pipeline (`ops::solvate`)
 
