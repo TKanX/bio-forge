@@ -83,16 +83,17 @@ impl Default for HydroConfig {
     }
 }
 
-/// Strategies for choosing neutral histidine labels.
+/// Strategies for selecting neutral histidine tautomers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HisStrategy {
-    /// Force all neutral histidines to HID (delta-protonated).
+    /// Force all neutral histidines to HID (δ-protonated).
     DirectHID,
-    /// Force all neutral histidines to HIE (epsilon-protonated).
+    /// Force all neutral histidines to HIE (ε-protonated).
     DirectHIE,
-    /// Randomly choose between HID and HIE.
+    /// Randomly choose between HID and HIE with equal probability.
     Random,
-    /// Analyze hydrogen-bond networks to select the tautomer most likely to bond.
+    /// Analyze hydrogen-bond networks to select the tautomer most likely to form
+    /// favorable interactions with nearby acceptors.
     HbNetwork,
 }
 
