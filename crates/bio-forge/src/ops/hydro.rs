@@ -178,6 +178,11 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
 /// Applies pH-based protonation to all non-HIS titratable residues.
 ///
 /// CYX (disulfide-bonded cysteine) is never modified.
+///
+/// # Arguments
+///
+/// * `structure` - Mutable structure whose residues will be protonated.
+/// * `ph` - Target pH for protonation decisions.
 fn apply_non_his_protonation(structure: &mut Structure, ph: f64) {
     structure.par_residues_mut().for_each(|residue| {
         if residue.category != ResidueCategory::Standard {
@@ -208,6 +213,15 @@ fn apply_non_his_protonation(structure: &mut Structure, ph: f64) {
 ///
 /// ASH/GLH (protonated carboxyls) are excluded because neutral COOH groups
 /// cannot form ionic salt bridges.
+///
+/// # Arguments
+///
+/// * `structure` - Structure from which to extract carboxylate oxygens.
+/// * `target_ph` - Optional pH used to determine C-terminal protonation.
+///
+/// # Returns
+///
+/// Spatial grid of carboxylate oxygen positions mapped to (chain_idx, residue_idx).
 fn build_carboxylate_grid(structure: &Structure, target_ph: Option<f64>) -> Grid<(usize, usize)> {
     let c_term_deprotonated = c_terminus_is_deprotonated(target_ph);
 
@@ -260,4 +274,62 @@ fn build_carboxylate_grid(structure: &Structure, target_ph: Option<f64>) -> Grid
         .collect();
 
     Grid::new(atoms, SALT_BRIDGE_DISTANCE + 0.5)
+}
+
+/// Determines the protonation state for a histidine residue.
+///
+/// # Decision Tree
+///
+/// 1. **pH < 6.0** → HIP (doubly protonated, +1 charge)
+/// 2. **No pH AND no salt bridge detection** → `None` (preserve user-defined name)
+/// 3. **Salt bridge detected** → HIP
+/// 4. **No pH** → `None` (salt bridge didn't trigger, preserve name)
+/// 5. **pH ≥ 6.0, no salt bridge** → Apply HisStrategy (HID/HIE)
+///
+/// # Arguments
+///
+/// * `residue` - Histidine residue to evaluate.
+/// * `config` - Hydrogenation configuration.
+/// * `acceptor_grid` - Optional spatial grid of hydrogen bond acceptors.
+/// * `carboxylate_grid` - Optional spatial grid of carboxylate oxygens.
+/// * `self_indices` - Tuple of (chain_idx, residue_idx) for the current residue.
+///
+/// # Returns
+///
+/// `Some(new_name)` when the residue should be renamed, `None` to preserve current name.
+fn determine_his_protonation(
+    residue: &Residue,
+    config: &HydroConfig,
+    acceptor_grid: Option<&Grid<(usize, usize)>>,
+    carboxylate_grid: Option<&Grid<(usize, usize)>>,
+    self_indices: (usize, usize),
+) -> Option<String> {
+    if let Some(ph) = config.target_ph {
+        if ph < HIS_HIP_PKA {
+            return Some("HIP".to_string());
+        }
+    }
+
+    if config.target_ph.is_none() && !config.his_salt_bridge_protonation {
+        return None;
+    }
+
+    if config.his_salt_bridge_protonation {
+        if let Some(grid) = carboxylate_grid {
+            if his_forms_salt_bridge(residue, grid, self_indices) {
+                return Some("HIP".to_string());
+            }
+        }
+    }
+
+    if config.target_ph.is_none() {
+        return None;
+    }
+
+    Some(select_neutral_his(
+        residue,
+        config.his_strategy,
+        acceptor_grid,
+        self_indices,
+    ))
 }
