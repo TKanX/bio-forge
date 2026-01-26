@@ -22,6 +22,7 @@ export interface SelectProps extends Omit<
   "children"
 > {
   label?: string;
+  description?: string;
   options: SelectOption[];
   placeholder?: string;
 }
@@ -31,7 +32,7 @@ export interface SelectProps extends Omit<
 // ============================================================================
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ label, options, placeholder, className, id, ...props }, ref) => {
+  ({ label, description, options, placeholder, className, id, ...props }, ref) => {
     const selectId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
 
     return (
@@ -91,6 +92,9 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
             <path d="m6 9 6 6 6-6" />
           </svg>
         </div>
+        {description && (
+          <p className="text-xs text-muted-foreground/80">{description}</p>
+        )}
       </div>
     );
   }
