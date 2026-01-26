@@ -1505,4 +1505,112 @@ mod tests {
         let res = structure.find_residue("A", 1, None).unwrap();
         assert_eq!(res.name, "ARG", "ARG should be preserved without pH");
     }
+
+    #[test]
+    fn coo_grid_includes_asp_oxygens_when_deprotonated() {
+        let residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let asp = structure.find_residue("A", 1, None).unwrap();
+        let od1 = asp.atom("OD1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&od1, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "ASP OD1 should be in COO⁻ grid");
+    }
+
+    #[test]
+    fn coo_grid_excludes_ash_oxygens_when_protonated() {
+        let mut residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        residue.name = "ASH".into();
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let ash = structure.find_residue("A", 1, None).unwrap();
+        let od1 = ash.atom("OD1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&od1, 0.1).exact().collect();
+        assert!(
+            neighbors.is_empty(),
+            "ASH oxygens should NOT be in COO⁻ grid"
+        );
+    }
+
+    #[test]
+    fn coo_grid_includes_glu_oxygens_when_deprotonated() {
+        let residue = residue_from_template("GLU", StandardResidue::GLU, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let glu = structure.find_residue("A", 1, None).unwrap();
+        let oe1 = glu.atom("OE1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oe1, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "GLU OE1 should be in COO⁻ grid");
+    }
+
+    #[test]
+    fn coo_grid_excludes_glh_oxygens_when_protonated() {
+        let mut residue = residue_from_template("GLU", StandardResidue::GLU, 1);
+        residue.name = "GLH".into();
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let glh = structure.find_residue("A", 1, None).unwrap();
+        let oe1 = glh.atom("OE1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oe1, 0.1).exact().collect();
+        assert!(
+            neighbors.is_empty(),
+            "GLH oxygens should NOT be in COO⁻ grid"
+        );
+    }
+
+    #[test]
+    fn coo_grid_includes_c_term_oxygens_at_neutral_ph() {
+        let residue = c_terminal_residue(1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let c_term = structure.find_residue("A", 1, None).unwrap();
+        let oxt = c_term.atom("OXT").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oxt, 0.1).exact().collect();
+        assert!(
+            !neighbors.is_empty(),
+            "C-term OXT should be in COO⁻ grid at pH 7.4"
+        );
+    }
+
+    #[test]
+    fn coo_grid_excludes_c_term_oxygens_below_pka() {
+        let residue = c_terminal_residue(1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(2.0));
+        let c_term = structure.find_residue("A", 1, None).unwrap();
+        let oxt = c_term.atom("OXT").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oxt, 0.1).exact().collect();
+        assert!(
+            neighbors.is_empty(),
+            "C-term OXT should NOT be in COO⁻ grid below pKa 3.1"
+        );
+    }
+
+    #[test]
+    fn coo_grid_uses_default_ph_when_target_ph_unset() {
+        let residue = c_terminal_residue(1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, None);
+        let c_term = structure.find_residue("A", 1, None).unwrap();
+        let oxt = c_term.atom("OXT").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oxt, 0.1).exact().collect();
+        assert!(
+            !neighbors.is_empty(),
+            "C-term OXT should be in COO⁻ grid with default pH 7.0"
+        );
+    }
 }
