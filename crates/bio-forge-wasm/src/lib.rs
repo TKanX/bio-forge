@@ -107,6 +107,9 @@ pub struct HydroConfig {
     #[tsify(type = "\"hid\" | \"hie\" | \"random\" | \"network\"")]
     #[serde(default = "default_his_strategy")]
     pub his_strategy: String,
+    /// Detect salt bridges for HIS → HIP conversion near carboxylate groups. Default: `true`
+    #[serde(default = "default_true")]
+    pub his_salt_bridge_protonation: bool,
 }
 
 fn default_true() -> bool {
@@ -123,6 +126,7 @@ impl Default for HydroConfig {
             target_ph: None,
             remove_existing_h: true,
             his_strategy: default_his_strategy(),
+            his_salt_bridge_protonation: true,
         }
     }
 }
@@ -139,6 +143,7 @@ impl From<HydroConfig> for CoreHydroConfig {
             target_ph: cfg.target_ph,
             remove_existing_h: cfg.remove_existing_h,
             his_strategy,
+            his_salt_bridge_protonation: cfg.his_salt_bridge_protonation,
         }
     }
 }
