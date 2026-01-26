@@ -2556,4 +2556,87 @@ mod tests {
         let neighbors: Vec<_> = grid.neighbors(&ca, 0.1).exact().collect();
         assert!(neighbors.is_empty(), "CA should NOT be in acceptor grid");
     }
+
+    #[test]
+    fn full_pipeline_preserves_user_protonation_without_ph() {
+        let mut his = residue_from_template("HID", StandardResidue::HIS, 1);
+        his.name = "HID".into();
+        let mut ash = residue_from_template("ASP", StandardResidue::ASP, 2);
+        ash.name = "ASH".into();
+        let mut structure = structure_with_residues(vec![his, ash]);
+
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        let ash = structure.find_residue("A", 2, None).unwrap();
+        assert_eq!(his.name, "HID", "user-specified HID should be preserved");
+        assert_eq!(ash.name, "ASH", "user-specified ASH should be preserved");
+    }
+
+    #[test]
+    fn full_pipeline_applies_all_pka_rules_with_ph() {
+        let asp = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let glu = residue_from_template("GLU", StandardResidue::GLU, 2);
+        let lys = residue_from_template("LYS", StandardResidue::LYS, 3);
+        let mut structure = structure_with_residues(vec![asp, glu, lys]);
+
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let asp = structure.find_residue("A", 1, None).unwrap();
+        let glu = structure.find_residue("A", 2, None).unwrap();
+        let lys = structure.find_residue("A", 3, None).unwrap();
+        assert_eq!(asp.name, "ASP", "ASP should remain at pH 7.4");
+        assert_eq!(glu.name, "GLU", "GLU should remain at pH 7.4");
+        assert_eq!(lys.name, "LYS", "LYS should remain at pH 7.4");
+    }
+
+    #[test]
+    fn full_pipeline_detects_salt_bridge_and_converts_his() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        let asp = structure.find_residue("A", 2, None).unwrap();
+        assert_eq!(his.name, "HIP", "HIS should become HIP via salt bridge");
+        assert_eq!(asp.name, "ASP", "ASP should remain deprotonated");
+    }
+
+    #[test]
+    fn full_pipeline_with_all_options_disabled() {
+        let mut his = residue_from_template("HID", StandardResidue::HIS, 1);
+        his.name = "HID".into();
+        let mut structure = structure_with_residue(his);
+
+        let config = HydroConfig {
+            target_ph: None,
+            remove_existing_h: false,
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::DirectHIE,
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HID",
+            "HID should be preserved with all options disabled"
+        );
+    }
 }
