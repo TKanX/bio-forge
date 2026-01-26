@@ -81,13 +81,22 @@ bioforge repair -i cleaned.pdb -o repaired.pdb
 bioforge hydro -i repaired.pdb -o protonated.pdb --ph 7.0 --his network
 ```
 
+Adds hydrogen atoms using pH-aware protonation and geometric optimization. The pipeline operates in three phases:
+
+1. **Non-HIS Protonation** (when `--ph` is specified) – Applies pKa rules to ASP, GLU, LYS, ARG, CYS, TYR.
+2. **HIS Protonation** – Uses pH thresholds, salt bridge detection, and tautomer strategy to determine HID/HIE/HIP states.
+3. **Hydrogen Placement** – Reconstructs hydrogen geometry from templates with tetrahedral terminal handling.
+
+When `--ph` is omitted, the pipeline skips automatic protonation and only adds hydrogens to residues as-named, preserving user-specified protonation states.
+
 Options:
 
-| Flag                                | Purpose                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------- |
-| `--ph <value>`                      | Target pH for protonation decisions.                                      |
-| `--no-strip`                        | Keep existing hydrogens instead of stripping before rebuild.              |
-| `--his <hid\|hie\|random\|network>` | Histidine tautomer strategy. Defaults to `network` (hydrogen-bond-aware). |
+| Flag                                | Purpose                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `--ph <value>`                      | Target pH for protonation decisions. Omit to preserve original residue names.                    |
+| `--no-strip`                        | Keep existing hydrogens instead of stripping before rebuild.                                     |
+| `--his <hid\|hie\|random\|network>` | Histidine tautomer strategy. Defaults to `network` (hydrogen-bond-aware).                        |
+| `--no-his-salt-bridge`              | Disable salt bridge detection for HIS → HIP conversion near carboxylate groups (ASP⁻/GLU⁻/COO⁻). |
 
 ### `solvate` – Build a solvent box and add ions
 

@@ -16,6 +16,7 @@ export interface CheckboxProps extends Omit<
   "type"
 > {
   label?: string;
+  description?: string;
 }
 
 // ============================================================================
@@ -23,14 +24,10 @@ export interface CheckboxProps extends Omit<
 // ============================================================================
 
 export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
-  ({ label, className, ...props }, ref) => {
+  ({ label, description, className, ...props }, ref) => {
     return (
-      <label
-        className={cn(
-          "inline-flex items-center gap-2 cursor-pointer",
-          className
-        )}
-      >
+      <div className={cn("space-y-1", className)}>
+        <label className="inline-flex items-center gap-2 cursor-pointer">
         <span className="relative inline-flex items-center justify-center">
           <input
             ref={ref}
@@ -65,8 +62,12 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
             <polyline points="20 6 9 17 4 12" />
           </svg>
         </span>
-        {label && <span className="text-sm text-foreground">{label}</span>}
-      </label>
+          {label && <span className="text-sm text-foreground">{label}</span>}
+        </label>
+        {description && (
+          <p className="text-xs text-muted-foreground/80">{description}</p>
+        )}
+      </div>
     );
   }
 );

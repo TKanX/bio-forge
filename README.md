@@ -21,7 +21,7 @@ Load → Clean → Repair → Hydrogenate → Solvate → Topology → Write
 1. **Load** – `io::read_pdb_structure` or `io::read_mmcif_structure` parses coordinates with `IoContext` alias resolution.
 2. **Clean** – `ops::clean_structure` removes waters, ions, hetero residues, or arbitrary residue names via `CleanConfig`.
 3. **Repair** – `ops::repair_structure` realigns residues to templates and rebuilds missing heavy atoms (OXT on C-termini, OP3 on 5'-phosphorylated nucleic acids).
-4. **Hydrogenate** – `ops::add_hydrogens` infers protonation states (configurable pH and histidine strategy) and reconstructs hydrogens from template anchors.
+4. **Hydrogenate** – `ops::add_hydrogens` infers protonation states (configurable pH, histidine strategy, and salt bridge detection) and reconstructs hydrogens from template anchors.
 5. **Solvate** – `ops::solvate_structure` creates a periodic box, packs water on a configurable lattice, and swaps molecules for ions to satisfy a target charge.
 6. **Topology** – `ops::TopologyBuilder` emits bond connectivity with peptide-link detection, nucleic backbone connectivity, and disulfide heuristics.
 7. **Write** – `io::write_pdb_structure` / `io::write_mmcif_structure` serialize the processed structure; `write_*_topology` helpers emit CONECT or `struct_conn` records.

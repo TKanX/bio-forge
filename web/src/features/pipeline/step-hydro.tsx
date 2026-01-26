@@ -49,11 +49,12 @@ export function StepHydro() {
       {/* pH setting */}
       <Input
         label="Target pH"
+        description="Omit to preserve original residue names (no auto-protonation)"
         type="number"
         step="0.1"
         min={0}
         max={14}
-        placeholder="Leave empty for neutral"
+        placeholder="Leave empty to preserve names"
         value={config.targetPh ?? ""}
         onChange={(e) =>
           setConfig({
@@ -72,6 +73,7 @@ export function StepHydro() {
       {/* Histidine strategy */}
       <Select
         label="Histidine strategy"
+        description="Only applies when pH is specified and HIS is neutral (pH ≥ 6.0)"
         value={config.hisStrategy}
         onChange={(e) =>
           setConfig({
@@ -79,6 +81,16 @@ export function StepHydro() {
           })
         }
         options={[...HIS_STRATEGY_OPTIONS]}
+      />
+
+      {/* Salt bridge detection */}
+      <Checkbox
+        label="Detect salt bridges"
+        description="HIS → HIP near carboxylate groups (ASP⁻/GLU⁻/C-term COO⁻). pH-independent geometric detection."
+        checked={config.hisSaltBridgeProtonation}
+        onChange={(e) =>
+          setConfig({ hisSaltBridgeProtonation: e.target.checked })
+        }
       />
     </StepWrapper>
   );

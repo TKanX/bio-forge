@@ -160,11 +160,12 @@ Residue template for custom ligand topology.
 
 ### HydroConfig
 
-| Property          | Type                                      | Default     | Description                             |
-| ----------------- | ----------------------------------------- | ----------- | --------------------------------------- |
-| `targetPh`        | `number \| undefined`                     | `undefined` | Target pH for protonation decisions     |
-| `removeExistingH` | `boolean`                                 | `true`      | Remove existing hydrogens before adding |
-| `hisStrategy`     | `'hid' \| 'hie' \| 'random' \| 'network'` | `'network'` | Histidine tautomer strategy             |
+| Property                   | Type                                      | Default     | Description                                                           |
+| -------------------------- | ----------------------------------------- | ----------- | --------------------------------------------------------------------- |
+| `targetPh`                 | `number \| undefined`                     | `undefined` | Target pH for protonation decisions. Omit to preserve original names. |
+| `removeExistingH`          | `boolean`                                 | `true`      | Remove existing hydrogens before adding new ones                      |
+| `hisStrategy`              | `'hid' \| 'hie' \| 'random' \| 'network'` | `'network'` | Histidine tautomer strategy for neutral pH                            |
+| `hisSaltBridgeProtonation` | `boolean`                                 | `true`      | Detect salt bridges (HIS near ASP⁻/GLU⁻/COO⁻) and convert to HIP      |
 
 ### SolvateConfig
 

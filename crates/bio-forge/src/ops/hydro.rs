@@ -2,7 +2,7 @@
 //!
 //! This module inspects residue templates, predicts protonation states from pH or hydrogen
 //! bonding networks, relabels residues accordingly, and rebuilds missing hydrogens while
-//! respecting polymer termini, nucleic acid priming, and disulfide bridges.
+//! respecting polymer termini, nucleic acid priming, disulfide bridges, and salt bridges.
 
 use crate::db;
 use crate::model::{
@@ -18,14 +18,32 @@ use nalgebra::{Matrix3, Rotation3, Vector3};
 use rand::Rng;
 use std::collections::HashSet;
 
-/// Maximum sulfur–sulfur distance (Å) used to detect disulfide bridges.
-const DISULFIDE_SG_THRESHOLD: f64 = 2.2;
+/// Henderson–Hasselbalch breakpoint for histidine double-protonation (HIP).
+const HIS_HIP_PKA: f64 = 6.0;
+/// Henderson–Hasselbalch breakpoint for aspartate protonation (ASH).
+const ASP_PKA: f64 = 3.9;
+/// Henderson–Hasselbalch breakpoint for glutamate protonation (GLH).
+const GLU_PKA: f64 = 4.2;
+/// Henderson–Hasselbalch breakpoint for lysine deprotonation (LYN).
+const LYS_PKA: f64 = 10.5;
+/// Henderson–Hasselbalch breakpoint for arginine deprotonation (ARN).
+const ARG_PKA: f64 = 12.5;
+/// Henderson–Hasselbalch breakpoint for cysteine deprotonation (CYM).
+const CYS_PKA: f64 = 8.3;
+/// Henderson–Hasselbalch breakpoint for tyrosine deprotonation (TYM).
+const TYR_PKA: f64 = 10.0;
 /// Henderson–Hasselbalch breakpoint for protonated N-termini.
 const N_TERM_PKA: f64 = 8.0;
 /// Henderson–Hasselbalch breakpoint for protonated C-termini.
 const C_TERM_PKA: f64 = 3.1;
 /// Henderson–Hasselbalch breakpoint for the second dissociation of terminal phosphate.
 const PHOSPHATE_PKA2: f64 = 6.5;
+/// Default assumed pH for terminal state decisions when no explicit pH is specified.
+const DEFAULT_TERMINAL_PH: f64 = 7.0;
+/// Maximum sulfur–sulfur distance (Å) for disulfide bridge detection.
+const DISULFIDE_SG_THRESHOLD: f64 = 2.2;
+/// Maximum nitrogen–oxygen distance (Å) for HIS-carboxylate salt bridge detection.
+const SALT_BRIDGE_DISTANCE: f64 = 4.0;
 /// Standard sp³ tetrahedral bond angle (degrees).
 const SP3_ANGLE: f64 = 109.5;
 /// Standard N-H bond length (Å).
@@ -37,53 +55,65 @@ const COOH_BOND_LENGTH: f64 = 0.97;
 
 /// Parameters controlling hydrogen addition behavior.
 ///
-/// `HydroConfig` can target a specific solution pH, remove pre-existing hydrogens, and
-/// choose how neutral histidine tautomers are assigned.
+/// `HydroConfig` can target a specific solution pH, remove pre-existing hydrogens,
+/// choose how neutral histidine tautomers are assigned, and enable/disable salt bridge detection.
 #[derive(Debug, Clone)]
 pub struct HydroConfig {
     /// Optional solvent pH value used for titration decisions.
     pub target_ph: Option<f64>,
     /// Whether to strip all existing hydrogens before reconstruction.
     pub remove_existing_h: bool,
-    /// Strategy for setting neutral histidine tautomer labels.
+    /// Strategy for selecting neutral histidine tautomers (HID/HIE).
     pub his_strategy: HisStrategy,
+    /// Whether to protonate histidine to HIP when forming salt bridges with
+    /// nearby carboxylate groups (ASP⁻/GLU⁻/C-terminal COO⁻).
+    pub his_salt_bridge_protonation: bool,
 }
 
 impl Default for HydroConfig {
-    /// Provides biologically reasonable defaults (physiological pH, removal of old hydrogens,
-    /// and hydrogen-bond-aware histidine selection).
+    /// Provides biologically reasonable defaults (no protonation state changes,
+    /// removal of old hydrogens, hydrogen-bond-aware histidine selection,
+    /// and HIS salt bridge detection).
     fn default() -> Self {
         Self {
             target_ph: None,
             remove_existing_h: true,
             his_strategy: HisStrategy::HbNetwork,
+            his_salt_bridge_protonation: true,
         }
     }
 }
 
-/// Strategies for choosing neutral histidine labels.
+/// Strategies for selecting neutral histidine tautomers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HisStrategy {
-    /// Force all neutral histidines to HID (delta-protonated).
+    /// Force all neutral histidines to HID (δ-protonated).
     DirectHID,
-    /// Force all neutral histidines to HIE (epsilon-protonated).
+    /// Force all neutral histidines to HIE (ε-protonated).
     DirectHIE,
-    /// Randomly choose between HID and HIE.
+    /// Randomly choose between HID and HIE with equal probability.
     Random,
-    /// Analyze hydrogen-bond networks to select the tautomer most likely to bond.
+    /// Analyze hydrogen-bond networks to select the tautomer most likely to form
+    /// favorable interactions with nearby acceptors.
     HbNetwork,
 }
 
 /// Adds hydrogens to all standard residues in-place, updating protonation states when needed.
 ///
-/// Disulfide bridges are detected prior to titration and preserved by relabeling cysteines to
-/// `CYX`. Residues lacking required anchor atoms will trigger descriptive errors so upstream
-/// cleanup steps can correct the issues.
+/// This function implements a multi-phase pipeline:
+///
+/// 1. **Disulfide detection** — Identifies CYS pairs forming S-S bonds and relabels to CYX.
+/// 2. **Non-HIS protonation** — Applies pKa-based titration to ASP, GLU, LYS, ARG, CYS, TYR
+///    (only when `target_ph` is specified).
+/// 3. **HIS protonation** — Determines HIS state via pH thresholds, salt bridge detection,
+///    and tautomer strategy.
+/// 4. **Hydrogen construction** — Builds hydrogens according to template geometry and
+///    terminal-specific rules.
 ///
 /// # Arguments
 ///
 /// * `structure` - Mutable structure whose residues will be protonated and hydrated.
-/// * `config` - Hydrogenation configuration, including pH target and histidine strategy.
+/// * `config` - Hydrogenation configuration controlling pH, strategy, and options.
 ///
 /// # Returns
 ///
@@ -96,8 +126,20 @@ pub enum HisStrategy {
 pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<(), Error> {
     mark_disulfide_bridges(structure);
 
-    let acceptor_grid = if config.his_strategy == HisStrategy::HbNetwork {
+    let acceptor_grid = if config.his_strategy == HisStrategy::HbNetwork
+        && config.target_ph.is_some_and(|ph| ph >= HIS_HIP_PKA)
+    {
         Some(build_acceptor_grid(structure))
+    } else {
+        None
+    };
+
+    if config.target_ph.is_some() {
+        apply_non_his_protonation(structure, config.target_ph.unwrap());
+    }
+
+    let carboxylate_grid = if config.his_salt_bridge_protonation {
+        Some(build_carboxylate_grid(structure, config.target_ph))
     } else {
         None
     };
@@ -114,15 +156,16 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
                         return Ok(());
                     }
 
-                    let new_name = determine_protonation_state(
-                        residue,
-                        config,
-                        acceptor_grid.as_ref(),
-                        Some((c_idx, r_idx)),
-                    );
-
-                    if let Some(name) = new_name {
-                        residue.name = name.into();
+                    if let Some(StandardResidue::HIS) = residue.standard_name
+                        && let Some(new_name) = determine_his_protonation(
+                            residue,
+                            config,
+                            acceptor_grid.as_ref(),
+                            carboxylate_grid.as_ref(),
+                            (c_idx, r_idx),
+                        )
+                    {
+                        residue.name = new_name.into();
                     }
 
                     if config.remove_existing_h {
@@ -134,127 +177,349 @@ pub fn add_hydrogens(structure: &mut Structure, config: &HydroConfig) -> Result<
         })
 }
 
-/// Builds a spatial grid of all nitrogen and oxygen atoms in the structure.
+/// Applies pH-based protonation to all non-HIS titratable residues.
+///
+/// CYX (disulfide-bonded cysteine) is never modified.
 ///
 /// # Arguments
 ///
-/// * `structure` - Structure from which to extract acceptor atoms.
+/// * `structure` - Mutable structure whose residues will be protonated.
+/// * `ph` - Target pH for protonation decisions.
+fn apply_non_his_protonation(structure: &mut Structure, ph: f64) {
+    structure.par_residues_mut().for_each(|residue| {
+        if residue.category != ResidueCategory::Standard {
+            return;
+        }
+
+        if residue.name == "CYX" {
+            return;
+        }
+
+        let new_name = match residue.standard_name {
+            Some(StandardResidue::ASP) => Some(if ph < ASP_PKA { "ASH" } else { "ASP" }),
+            Some(StandardResidue::GLU) => Some(if ph < GLU_PKA { "GLH" } else { "GLU" }),
+            Some(StandardResidue::LYS) => Some(if ph > LYS_PKA { "LYN" } else { "LYS" }),
+            Some(StandardResidue::ARG) => Some(if ph > ARG_PKA { "ARN" } else { "ARG" }),
+            Some(StandardResidue::CYS) => Some(if ph > CYS_PKA { "CYM" } else { "CYS" }),
+            Some(StandardResidue::TYR) => Some(if ph > TYR_PKA { "TYM" } else { "TYR" }),
+            _ => None,
+        };
+
+        if let Some(name) = new_name {
+            residue.name = name.into();
+        }
+    });
+}
+
+/// Builds a spatial grid of carboxylate oxygen atoms for salt bridge detection.
+///
+/// ASH/GLH (protonated carboxyls) are excluded because neutral COOH groups
+/// cannot form ionic salt bridges.
+///
+/// # Arguments
+///
+/// * `structure` - Structure from which to extract carboxylate oxygens.
+/// * `target_ph` - Optional pH used to determine C-terminal protonation.
 ///
 /// # Returns
 ///
-/// A `Grid` containing positions and residue indices of all N, O, and F atoms.
-fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
+/// Spatial grid of carboxylate oxygen positions mapped to (chain_idx, residue_idx).
+fn build_carboxylate_grid(structure: &Structure, target_ph: Option<f64>) -> Grid<(usize, usize)> {
+    let c_term_deprotonated = c_terminus_is_deprotonated(target_ph);
+
     let atoms: Vec<(Point, (usize, usize))> = structure
-        .iter_chains()
+        .par_chains()
         .enumerate()
         .flat_map(|(c_idx, chain)| {
             chain
-                .iter_residues()
+                .par_residues()
                 .enumerate()
-                .flat_map(move |(r_idx, residue)| {
-                    residue
-                        .iter_atoms()
-                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
-                        .map(move |a| (a.pos, (c_idx, r_idx)))
+                .flat_map_iter(move |(r_idx, residue)| {
+                    let mut positions = Vec::new();
+
+                    // ASP⁻ carboxylate oxygens
+                    if residue.name == "ASP" {
+                        if let Some(od1) = residue.atom("OD1") {
+                            positions.push((od1.pos, (c_idx, r_idx)));
+                        }
+                        if let Some(od2) = residue.atom("OD2") {
+                            positions.push((od2.pos, (c_idx, r_idx)));
+                        }
+                    }
+
+                    // GLU⁻ carboxylate oxygens
+                    if residue.name == "GLU" {
+                        if let Some(oe1) = residue.atom("OE1") {
+                            positions.push((oe1.pos, (c_idx, r_idx)));
+                        }
+                        if let Some(oe2) = residue.atom("OE2") {
+                            positions.push((oe2.pos, (c_idx, r_idx)));
+                        }
+                    }
+
+                    // C-terminal COO⁻ (only if deprotonated)
+                    if residue.position == ResiduePosition::CTerminal
+                        && residue.standard_name.is_some_and(|s| s.is_protein())
+                        && c_term_deprotonated
+                    {
+                        if let Some(o) = residue.atom("O") {
+                            positions.push((o.pos, (c_idx, r_idx)));
+                        }
+                        if let Some(oxt) = residue.atom("OXT") {
+                            positions.push((oxt.pos, (c_idx, r_idx)));
+                        }
+                    }
+
+                    positions
                 })
         })
         .collect();
-    Grid::new(atoms, 3.5)
+
+    Grid::new(atoms, SALT_BRIDGE_DISTANCE + 0.5)
 }
 
-/// Predicts the protonation-induced residue rename for a given polymer residue.
+/// Determines the protonation state for a histidine residue.
 ///
-/// Applies residue-specific pKa thresholds, handles histidine tautomer selection, and
-/// respects previously tagged disulfide cysteines.
+/// # Decision Tree
+///
+/// 1. **pH < 6.0** → HIP (doubly protonated, +1 charge)
+/// 2. **No pH AND no salt bridge detection** → `None` (preserve user-defined name)
+/// 3. **Salt bridge detected** → HIP
+/// 4. **No pH** → `None` (salt bridge didn't trigger, preserve name)
+/// 5. **pH ≥ 6.0, no salt bridge** → Apply HisStrategy (HID/HIE)
 ///
 /// # Arguments
 ///
-/// * `residue` - Residue under evaluation.
-/// * `config` - Hydrogenation configuration containing pH and histidine options.
-/// * `grid` - Optional grid of acceptor atoms for HIS network analysis.
-/// * `indices` - Optional (chain_idx, res_idx) to exclude self-interactions.
+/// * `residue` - Histidine residue to evaluate.
+/// * `config` - Hydrogenation configuration.
+/// * `acceptor_grid` - Optional spatial grid of hydrogen bond acceptors.
+/// * `carboxylate_grid` - Optional spatial grid of carboxylate oxygens.
+/// * `self_indices` - Tuple of (chain_idx, residue_idx) for the current residue.
 ///
 /// # Returns
 ///
-/// `Some(new_name)` when the residue should be relabeled; otherwise `None`.
-fn determine_protonation_state(
+/// `Some(new_name)` when the residue should be renamed, `None` to preserve current name.
+fn determine_his_protonation(
     residue: &Residue,
     config: &HydroConfig,
-    grid: Option<&Grid<(usize, usize)>>,
-    indices: Option<(usize, usize)>,
+    acceptor_grid: Option<&Grid<(usize, usize)>>,
+    carboxylate_grid: Option<&Grid<(usize, usize)>>,
+    self_indices: (usize, usize),
 ) -> Option<String> {
-    let std = residue.standard_name?;
+    if let Some(ph) = config.target_ph
+        && ph < HIS_HIP_PKA
+    {
+        return Some("HIP".to_string());
+    }
 
-    if std == StandardResidue::CYS && residue.name == "CYX" {
+    if config.target_ph.is_none() && !config.his_salt_bridge_protonation {
         return None;
     }
 
-    if let Some(ph) = config.target_ph {
-        return match std {
-            StandardResidue::ASP => Some(if ph < 3.9 {
-                "ASH".to_string()
-            } else {
-                "ASP".to_string()
-            }),
-            StandardResidue::GLU => Some(if ph < 4.2 {
-                "GLH".to_string()
-            } else {
-                "GLU".to_string()
-            }),
-            StandardResidue::LYS => Some(if ph > 10.5 {
-                "LYN".to_string()
-            } else {
-                "LYS".to_string()
-            }),
-            StandardResidue::ARG => Some(if ph > 12.5 {
-                "ARN".to_string()
-            } else {
-                "ARG".to_string()
-            }),
-            StandardResidue::CYS => Some(if ph > 8.3 {
-                "CYM".to_string()
-            } else {
-                "CYS".to_string()
-            }),
-            StandardResidue::TYR => Some(if ph > 10.0 {
-                "TYM".to_string()
-            } else {
-                "TYR".to_string()
-            }),
-            StandardResidue::HIS => {
-                if ph < 6.0 {
-                    Some("HIP".to_string())
-                } else {
-                    Some(select_neutral_his(
-                        residue,
-                        config.his_strategy,
-                        grid,
-                        indices,
-                    ))
-                }
-            }
-            _ => None,
-        };
-    }
-
-    if std == StandardResidue::HIS && matches!(residue.name.as_str(), "HIS" | "HID" | "HIE" | "HIP")
+    if config.his_salt_bridge_protonation
+        && let Some(grid) = carboxylate_grid
+        && his_forms_salt_bridge(residue, grid, self_indices)
     {
-        return Some(select_neutral_his(
-            residue,
-            config.his_strategy,
-            grid,
-            indices,
-        ));
+        return Some("HIP".to_string());
     }
 
-    None
+    config.target_ph?;
+
+    Some(select_neutral_his(
+        residue,
+        config.his_strategy,
+        acceptor_grid,
+        self_indices,
+    ))
 }
 
-/// Identifies cysteine pairs forming disulfide bonds and renames them to `CYX`.
+/// Detects if a histidine forms a salt bridge with nearby carboxylate groups.
+///
+/// Checks if either ND1 or NE2 nitrogen is within [`SALT_BRIDGE_DISTANCE`] of
+/// any carboxylate oxygen in the grid.
 ///
 /// # Arguments
 ///
-/// * `structure` - Mutable structure containing residues to scan and relabel.
+/// * `residue` - Histidine residue to evaluate.
+/// * `carboxylate_grid` - Spatial grid of carboxylate oxygen positions.
+/// * `self_indices` - Tuple of (chain_idx, residue_idx) for the current residue.
+///
+/// # Returns
+///
+/// `true` if a salt bridge is detected, `false` otherwise.
+fn his_forms_salt_bridge(
+    residue: &Residue,
+    carboxylate_grid: &Grid<(usize, usize)>,
+    self_indices: (usize, usize),
+) -> bool {
+    // Check ND1
+    if let Some(nd1) = residue.atom("ND1") {
+        for (_, &idx) in carboxylate_grid
+            .neighbors(&nd1.pos, SALT_BRIDGE_DISTANCE)
+            .exact()
+        {
+            if idx != self_indices {
+                return true;
+            }
+        }
+    }
+
+    // Check NE2
+    if let Some(ne2) = residue.atom("NE2") {
+        for (_, &idx) in carboxylate_grid
+            .neighbors(&ne2.pos, SALT_BRIDGE_DISTANCE)
+            .exact()
+        {
+            if idx != self_indices {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Selects a neutral histidine tautomer using the configured strategy.
+///
+/// # Arguments
+///
+/// * `residue` - Histidine residue to evaluate.
+/// * `strategy` - Strategy for selecting the tautomer.
+/// * `acceptor_grid` - Optional spatial grid of hydrogen bond acceptors.
+/// * `self_indices` - Tuple of (chain_idx, residue_idx) for the current residue.
+///
+/// # Returns
+///
+/// `"HID"` or `"HIE"` depending on the selected tautomer.
+fn select_neutral_his(
+    residue: &Residue,
+    strategy: HisStrategy,
+    acceptor_grid: Option<&Grid<(usize, usize)>>,
+    self_indices: (usize, usize),
+) -> String {
+    match strategy {
+        HisStrategy::DirectHID => "HID".to_string(),
+        HisStrategy::DirectHIE => "HIE".to_string(),
+        HisStrategy::Random => {
+            let mut rng = rand::rng();
+            if rng.random_bool(0.5) {
+                "HID".to_string()
+            } else {
+                "HIE".to_string()
+            }
+        }
+        HisStrategy::HbNetwork => optimize_his_network(residue, acceptor_grid, self_indices),
+    }
+}
+
+/// Determines the best histidine tautomer by inspecting nearby hydrogen-bond acceptors.
+///
+/// Computes hypothetical H-bond scores for both ND1 (HID) and NE2 (HIE) protonation
+/// and returns the tautomer with the higher score.
+///
+/// # Arguments
+///
+/// * `residue` - Histidine residue to evaluate.
+/// * `acceptor_grid` - Optional spatial grid of hydrogen bond acceptors.
+/// * `self_indices` - Tuple of (chain_idx, residue_idx) for the current residue.
+///
+/// # Returns
+///
+/// `"HID"` or `"HIE"` depending on which tautomer has a better H-bonding score.
+fn optimize_his_network(
+    residue: &Residue,
+    acceptor_grid: Option<&Grid<(usize, usize)>>,
+    self_indices: (usize, usize),
+) -> String {
+    let grid = match acceptor_grid {
+        Some(g) => g,
+        None => return "HIE".to_string(),
+    };
+
+    let score_hid = calculate_h_bond_score(residue, "ND1", "CG", "CE1", grid, self_indices);
+    let score_hie = calculate_h_bond_score(residue, "NE2", "CD2", "CE1", grid, self_indices);
+
+    if score_hid > score_hie {
+        "HID".to_string()
+    } else {
+        "HIE".to_string()
+    }
+}
+
+/// Calculates a geometric score for a potential hydrogen bond from an sp² nitrogen.
+///
+/// The score considers both distance (< 2.7 Å) and angle (> 90°) criteria for
+/// valid hydrogen bonds.
+///
+/// # Arguments
+///
+/// * `residue` - Histidine residue containing the nitrogen.
+/// * `n_name` - Name of the nitrogen atom (e.g., "ND1" or "NE2").
+/// * `c1_name` - Name of the first carbon anchor atom.
+/// * `c2_name` - Name of the second carbon anchor atom.
+/// * `grid` - Spatial grid of potential acceptor atoms.
+/// * `self_idx` - Tuple of (chain_idx, residue_idx) for the current residue.
+///
+/// # Returns
+///
+/// Hydrogen bond score as a floating-point value.
+fn calculate_h_bond_score(
+    residue: &Residue,
+    n_name: &str,
+    c1_name: &str,
+    c2_name: &str,
+    grid: &Grid<(usize, usize)>,
+    self_idx: (usize, usize),
+) -> f64 {
+    let n = match residue.atom(n_name) {
+        Some(a) => a,
+        None => return 0.0,
+    };
+    let c1 = match residue.atom(c1_name) {
+        Some(a) => a,
+        None => return 0.0,
+    };
+    let c2 = match residue.atom(c2_name) {
+        Some(a) => a,
+        None => return 0.0,
+    };
+
+    let v1 = (c1.pos - n.pos).normalize();
+    let v2 = (c2.pos - n.pos).normalize();
+    let bisector = (v1 + v2).normalize();
+    let h_dir = -bisector;
+    let h_pos = n.pos + h_dir;
+
+    let mut score = 0.0;
+
+    for (a_pos, &idx) in grid.neighbors(&n.pos, 3.5).exact() {
+        if idx == self_idx {
+            continue;
+        }
+
+        let h_a_vec = a_pos - h_pos;
+        let dist_sq = h_a_vec.norm_squared();
+
+        if dist_sq > 2.7 * 2.7 {
+            continue;
+        }
+
+        let h_a_dir = h_a_vec.normalize();
+        let cos_theta = h_dir.dot(&h_a_dir);
+
+        if cos_theta > 0.0 {
+            score += (1.0 / dist_sq) * (cos_theta * cos_theta);
+        }
+    }
+
+    score
+}
+
+/// Identifies cysteine pairs forming disulfide bonds and renames them to CYX.
+///
+/// # Arguments
+///
+/// * `structure` - Mutable structure to analyze and modify.
 fn mark_disulfide_bridges(structure: &mut Structure) {
     let cys_sulfurs: Vec<(Point, (usize, usize))> = structure
         .par_chains_mut()
@@ -314,156 +579,50 @@ fn mark_disulfide_bridges(structure: &mut Structure) {
         });
 }
 
-/// Selects a neutral histidine tautomer using the configured strategy.
+/// Builds a spatial grid of all nitrogen and oxygen atoms for H-bond network analysis.
 ///
 /// # Arguments
 ///
-/// * `residue` - Histidine residue being relabeled.
-/// * `strategy` - Selection strategy from [`HisStrategy`].
-/// * `grid` - Optional grid of acceptor atoms for HIS network analysis.
-/// * `indices` - Optional (chain_idx, res_idx) to exclude self-interactions.
+/// * `structure` - Structure from which to extract acceptor atoms.
 ///
 /// # Returns
 ///
-/// Either `"HID"` or `"HIE"`.
-fn select_neutral_his(
-    residue: &Residue,
-    strategy: HisStrategy,
-    grid: Option<&Grid<(usize, usize)>>,
-    indices: Option<(usize, usize)>,
-) -> String {
-    match strategy {
-        HisStrategy::DirectHID => "HID".to_string(),
-        HisStrategy::DirectHIE => "HIE".to_string(),
-        HisStrategy::Random => {
-            let mut rng = rand::rng();
-            if rng.random_bool(0.5) {
-                "HID".to_string()
-            } else {
-                "HIE".to_string()
-            }
-        }
-        HisStrategy::HbNetwork => optimize_his_network(residue, grid, indices),
-    }
-}
+/// Spatial grid of acceptor atom (N, O, F) positions mapped to (chain_idx, residue_idx).
+fn build_acceptor_grid(structure: &Structure) -> Grid<(usize, usize)> {
+    let atoms: Vec<(Point, (usize, usize))> = structure
+        .par_chains()
+        .enumerate()
+        .flat_map(|(c_idx, chain)| {
+            chain
+                .par_residues()
+                .enumerate()
+                .flat_map_iter(move |(r_idx, residue)| {
+                    residue
+                        .iter_atoms()
+                        .filter(|a| matches!(a.element, Element::N | Element::O | Element::F))
+                        .map(move |a| (a.pos, (c_idx, r_idx)))
+                })
+        })
+        .collect();
 
-/// Determines the best histidine tautomer by inspecting nearby hydrogen-bond acceptors.
-///
-/// # Arguments
-///
-/// * `residue` - Histidine residue being evaluated.
-/// * `grid` - Grid of acceptor atoms (N/O/F) in the structure.
-/// * `indices` - (chain_idx, res_idx) of the current residue.
-///
-/// # Returns
-///
-/// The histidine label (`"HID"` or `"HIE"`) that maximizes compatibility with neighbors.
-fn optimize_his_network(
-    residue: &Residue,
-    grid: Option<&Grid<(usize, usize)>>,
-    indices: Option<(usize, usize)>,
-) -> String {
-    let (grid, self_indices) = match (grid, indices) {
-        (Some(g), Some(i)) => (g, i),
-        _ => return "HIE".to_string(),
-    };
-
-    let score_hid = calculate_h_bond_score(residue, "ND1", "CG", "CE1", grid, self_indices);
-
-    let score_hie = calculate_h_bond_score(residue, "NE2", "CD2", "CE1", grid, self_indices);
-
-    if score_hid > score_hie {
-        "HID".to_string()
-    } else {
-        "HIE".to_string()
-    }
-}
-
-/// Calculates a geometric score for a potential hydrogen bond network.
-///
-/// Computes the hypothetical hydrogen position for an sp2 nitrogen and sums the
-/// scores of valid H-bonds formed with nearby acceptors. A valid H-bond must
-/// satisfy both distance (< 2.7Å H...A) and angle (> 90° N-H...A) constraints.
-///
-/// # Arguments
-///
-/// * `residue` - The residue containing the donor nitrogen.
-/// * `n_name` - Name of the nitrogen atom (donor).
-/// * `c1_name` - Name of the first neighbor carbon.
-/// * `c2_name` - Name of the second neighbor carbon.
-/// * `grid` - Spatial index of potential acceptors.
-/// * `self_idx` - Chain and residue index of the current residue to exclude self-interactions.
-///
-/// # Returns
-///
-/// A positive floating-point score, where higher indicates better H-bonding.
-fn calculate_h_bond_score(
-    residue: &Residue,
-    n_name: &str,
-    c1_name: &str,
-    c2_name: &str,
-    grid: &Grid<(usize, usize)>,
-    self_idx: (usize, usize),
-) -> f64 {
-    let n = match residue.atom(n_name) {
-        Some(a) => a,
-        None => return 0.0,
-    };
-    let c1 = match residue.atom(c1_name) {
-        Some(a) => a,
-        None => return 0.0,
-    };
-    let c2 = match residue.atom(c2_name) {
-        Some(a) => a,
-        None => return 0.0,
-    };
-
-    let v1 = (c1.pos - n.pos).normalize();
-    let v2 = (c2.pos - n.pos).normalize();
-    let bisector = (v1 + v2).normalize();
-    let h_dir = -bisector;
-    let h_pos = n.pos + h_dir;
-
-    let mut score = 0.0;
-
-    for (a_pos, &idx) in grid.neighbors(&n.pos, 3.5).exact() {
-        if idx == self_idx {
-            continue;
-        }
-
-        let h_a_vec = a_pos - h_pos;
-        let dist_sq = h_a_vec.norm_squared();
-
-        if dist_sq > 2.7 * 2.7 {
-            continue;
-        }
-
-        let h_a_dir = h_a_vec.normalize();
-        let cos_theta = h_dir.dot(&h_a_dir);
-
-        if cos_theta > 0.0 {
-            score += (1.0 / dist_sq) * (cos_theta * cos_theta);
-        }
-    }
-
-    score
+    Grid::new(atoms, 3.5)
 }
 
 /// Rebuilds hydrogens for a single residue using template geometry and terminal rules.
 ///
 /// # Arguments
 ///
-/// * `residue` - Residue to augment with hydrogens.
-/// * `config` - Hydrogenation configuration influencing terminal protonation.
+/// * `residue` - Mutable residue to which hydrogens will be added.
+/// * `config` - Hydrogenation configuration controlling pH and options.
 ///
 /// # Returns
 ///
-/// `Ok(())` when all hydrogens were added or already present.
+/// `Ok(())` when hydrogen construction succeeds.
 ///
 /// # Errors
 ///
-/// Returns [`Error::MissingInternalTemplate`] or [`Error::IncompleteResidueForHydro`] when
-/// required template data or anchor atoms are missing.
+/// Returns [`Error::MissingInternalTemplate`] when no template is found or
+/// [`Error::IncompleteResidueForHydro`] when required anchor atoms are missing.
 fn construct_hydrogens_for_residue(
     residue: &mut Residue,
     config: &HydroConfig,
@@ -512,17 +671,17 @@ fn construct_hydrogens_for_residue(
 
     match residue.position {
         ResiduePosition::NTerminal if residue.standard_name.is_some_and(|s| s.is_protein()) => {
-            construct_n_term_hydrogens(residue, n_term_should_be_protonated(config))?;
+            construct_n_term_hydrogens(residue, n_term_is_protonated(config.target_ph))?;
         }
         ResiduePosition::CTerminal if residue.standard_name.is_some_and(|s| s.is_protein()) => {
-            construct_c_term_hydrogen(residue, c_term_should_be_protonated(config))?;
+            construct_c_term_hydrogen(residue, c_term_is_protonated(config.target_ph))?;
         }
         ResiduePosition::ThreePrime if residue.standard_name.is_some_and(|s| s.is_nucleic()) => {
             construct_3_prime_hydrogen(residue)?;
         }
         ResiduePosition::FivePrime if residue.standard_name.is_some_and(|s| s.is_nucleic()) => {
             if residue.has_atom("P") {
-                construct_5_prime_phosphate_hydrogens(residue, config)?;
+                construct_5_prime_phosphate_hydrogens(residue, config.target_ph)?;
             } else if residue.has_atom("O5'") {
                 construct_5_prime_hydrogen(residue)?;
             }
@@ -533,91 +692,31 @@ fn construct_hydrogens_for_residue(
     Ok(())
 }
 
-/// Evaluates whether an N-terminus should remain protonated under the configured pH.
-///
-/// # Arguments
-///
-/// * `config` - Hydrogenation configuration that may provide a target pH.
-///
-/// # Returns
-///
-/// `true` when the pH is below the configured threshold or unspecified.
-fn n_term_should_be_protonated(config: &HydroConfig) -> bool {
-    config.target_ph.map(|ph| ph < N_TERM_PKA).unwrap_or(true)
+/// Returns the effective pH used for terminal protonation state decisions.
+#[inline]
+fn effective_terminal_ph(target_ph: Option<f64>) -> f64 {
+    target_ph.unwrap_or(DEFAULT_TERMINAL_PH)
 }
 
-/// Evaluates whether a C-terminus should remain protonated under the configured pH.
-///
-/// # Arguments
-///
-/// * `config` - Hydrogenation configuration potentially specifying pH.
-///
-/// # Returns
-///
-/// `true` when the pH is below the acidic cutoff; otherwise `false`.
-fn c_term_should_be_protonated(config: &HydroConfig) -> bool {
-    config.target_ph.map(|ph| ph < C_TERM_PKA).unwrap_or(false)
+/// Determines if a C-terminus should be considered deprotonated (COO⁻).
+#[inline]
+fn c_terminus_is_deprotonated(target_ph: Option<f64>) -> bool {
+    effective_terminal_ph(target_ph) >= C_TERM_PKA
 }
 
-/// Aligns template coordinates to residue anchors to predict a hydrogen position.
-///
-/// # Arguments
-///
-/// * `residue` - Residue containing measured anchor atoms.
-/// * `target_tmpl_pos` - Target hydrogen position from the template.
-/// * `anchor_names` - Atom names used to determine the rigid-body transform.
-/// * `rotation_override` - Optional rotation to use if the system is under-constrained (e.g. water).
-///
-/// # Returns
-///
-/// `Ok(point)` containing the placed coordinate or `Err(())` if anchors are missing.
-fn reconstruct_geometry(
-    residue: &Residue,
-    target_tmpl_pos: Point,
-    anchor_names: &[&str],
-    rotation_override: Option<Rotation3<f64>>,
-) -> Result<Point, ()> {
-    let template_view = db::get_template(&residue.name).ok_or(())?;
+/// Evaluates whether an N-terminus should be protonated (NH₃⁺).
+#[inline]
+fn n_term_is_protonated(target_ph: Option<f64>) -> bool {
+    effective_terminal_ph(target_ph) <= N_TERM_PKA
+}
 
-    let mut residue_pts = Vec::new();
-    let mut template_pts = Vec::new();
-
-    for name in anchor_names {
-        let r_atom = residue.atom(name).ok_or(())?;
-        residue_pts.push(r_atom.pos);
-
-        let t_pos = template_view
-            .heavy_atoms()
-            .find(|(n, _, _)| n == name)
-            .map(|(_, _, p)| p)
-            .ok_or(())?;
-        template_pts.push(t_pos);
-    }
-
-    let (mut rot, mut trans) = calculate_transform(&residue_pts, &template_pts).ok_or(())?;
-
-    if let (Some(override_rot), 1) = (rotation_override, anchor_names.len()) {
-        rot = override_rot.into_inner();
-        trans = residue_pts[0].coords - rot * template_pts[0].coords;
-    }
-
-    Ok(rot * target_tmpl_pos + trans)
+/// Evaluates whether a C-terminus should be protonated (COOH).
+#[inline]
+fn c_term_is_protonated(target_ph: Option<f64>) -> bool {
+    effective_terminal_ph(target_ph) < C_TERM_PKA
 }
 
 /// Rebuilds the N-terminal amine hydrogens using tetrahedral geometry.
-///
-/// # Arguments
-///
-/// * `residue` - Residue whose terminal hydrogens are being reconstructed.
-/// * `protonated` - Whether to place three hydrogens (`true`) or two (`false`).
-///
-/// # Returns
-///
-/// `Ok(())` when hydrogens are successfully placed.
-///
-/// # Errors
-///
-/// Returns [`Error::IncompleteResidueForHydro`] if the N or CA atoms are missing.
 fn construct_n_term_hydrogens(residue: &mut Residue, protonated: bool) -> Result<(), Error> {
     residue.remove_atom("H");
     residue.remove_atom("H1");
@@ -655,19 +754,6 @@ fn construct_n_term_hydrogens(residue: &mut Residue, protonated: bool) -> Result
 }
 
 /// Rebuilds the carboxylate proton at the C-terminus when protonated.
-///
-/// # Arguments
-///
-/// * `residue` - Residue to modify.
-/// * `protonated` - Whether the terminus should include the `HOXT` hydrogen.
-///
-/// # Returns
-///
-/// `Ok(())` after either removing or adding hydrogens as needed.
-///
-/// # Errors
-///
-/// Returns [`Error::IncompleteResidueForHydro`] if the `C` or `OXT` atoms are missing.
 fn construct_c_term_hydrogen(residue: &mut Residue, protonated: bool) -> Result<(), Error> {
     if !protonated {
         residue.remove_atom("HOXT");
@@ -716,19 +802,7 @@ fn construct_c_term_hydrogen(residue: &mut Residue, protonated: bool) -> Result<
     Ok(())
 }
 
-/// Adds the 3'-terminal hydroxyl hydrogen to nucleic acid residues when absent.
-///
-/// # Arguments
-///
-/// * `residue` - Residue representing a nucleic acid terminal unit.
-///
-/// # Returns
-///
-/// `Ok(())` when the hydrogen is added or already present.
-///
-/// # Errors
-///
-/// Returns [`Error::IncompleteResidueForHydro`] if required sugar atoms are missing.
+/// Adds the 3'-terminal hydroxyl hydrogen to nucleic acid residues.
 fn construct_3_prime_hydrogen(residue: &mut Residue) -> Result<(), Error> {
     if residue.has_atom("HO3'") {
         return Ok(());
@@ -762,18 +836,6 @@ fn construct_3_prime_hydrogen(residue: &mut Residue) -> Result<(), Error> {
 }
 
 /// Adds the 5'-terminal hydroxyl hydrogen for nucleic acid residues lacking phosphates.
-///
-/// # Arguments
-///
-/// * `residue` - Residue whose 5' terminus is being hydrated.
-///
-/// # Returns
-///
-/// `Ok(())` when the hydrogen is added or already exists.
-///
-/// # Errors
-///
-/// Returns [`Error::IncompleteResidueForHydro`] if sugar anchor atoms are missing.
 fn construct_5_prime_hydrogen(residue: &mut Residue) -> Result<(), Error> {
     if residue.has_atom("HO5'") {
         return Ok(());
@@ -805,27 +867,13 @@ fn construct_5_prime_hydrogen(residue: &mut Residue) -> Result<(), Error> {
 
 /// Adds hydrogens to 5'-terminal phosphate groups based on pH.
 ///
-/// At physiological pH (≥6.5), the terminal phosphate carries two negative charges and
-/// requires no protons. Below this threshold, one proton is added to OP3 with proper
-/// sp³ tetrahedral geometry: P-OP3-HOP3 ≈ 109.5°.
-///
-/// # Arguments
-///
-/// * `residue` - Nucleic acid residue with a 5'-terminal phosphate.
-/// * `config` - Hydrogenation configuration containing pH settings.
-///
-/// # Returns
-///
-/// `Ok(())` when hydrogens are appropriately placed or removed.
-///
-/// # Errors
-///
-/// Returns [`Error::IncompleteResidueForHydro`] if phosphate atoms are missing.
+/// At physiological pH (≥6.5), the terminal phosphate carries two negative charges
+/// and requires no protons. Below this threshold, one proton is added to OP3.
 fn construct_5_prime_phosphate_hydrogens(
     residue: &mut Residue,
-    config: &HydroConfig,
+    target_ph: Option<f64>,
 ) -> Result<(), Error> {
-    let ph = config.target_ph.unwrap_or(7.4);
+    let ph = effective_terminal_ph(target_ph);
 
     if ph >= PHOSPHATE_PKA2 {
         residue.remove_atom("HOP3");
@@ -864,18 +912,42 @@ fn construct_5_prime_phosphate_hydrogens(
     Ok(())
 }
 
+/// Aligns template coordinates to residue anchors to predict a hydrogen position.
+fn reconstruct_geometry(
+    residue: &Residue,
+    target_tmpl_pos: Point,
+    anchor_names: &[&str],
+    rotation_override: Option<Rotation3<f64>>,
+) -> Result<Point, ()> {
+    let template_view = db::get_template(&residue.name).ok_or(())?;
+
+    let mut residue_pts = Vec::new();
+    let mut template_pts = Vec::new();
+
+    for name in anchor_names {
+        let r_atom = residue.atom(name).ok_or(())?;
+        residue_pts.push(r_atom.pos);
+
+        let t_pos = template_view
+            .heavy_atoms()
+            .find(|(n, _, _)| n == name)
+            .map(|(_, _, p)| p)
+            .ok_or(())?;
+        template_pts.push(t_pos);
+    }
+
+    let (mut rot, mut trans) = calculate_transform(&residue_pts, &template_pts).ok_or(())?;
+
+    if let (Some(override_rot), 1) = (rotation_override, anchor_names.len()) {
+        rot = override_rot.into_inner();
+        trans = residue_pts[0].coords - rot * template_pts[0].coords;
+    }
+
+    Ok(rot * target_tmpl_pos + trans)
+}
+
 /// Builds an sp³ local coordinate frame centered at `center` with primary axis along
 /// `center - attached`.
-///
-/// # Arguments
-///
-/// * `center` - Center atom position (e.g., oxygen).
-/// * `attached` - Position of the atom bonded to center (e.g., carbon).
-/// * `reference` - Optional third atom for defining the xy-plane orientation.
-///
-/// # Returns
-///
-/// A tuple of orthonormal vectors `(x, y, z)` where `z` points from attached toward center.
 fn build_sp3_frame(
     center: Point,
     attached: Point,
@@ -896,30 +968,12 @@ fn build_sp3_frame(
         });
 
     let x = (ref_vec - z * z.dot(&ref_vec)).normalize();
-
     let y = z.cross(&x);
 
     (x, y, z)
 }
 
 /// Places a hydroxyl hydrogen using sp³ tetrahedral geometry.
-///
-/// The hydrogen is placed at `bond_length` from `o_pos`, with the angle
-/// `attached-O-H` equal to `bond_angle`, and rotated by `dihedral_offset`
-/// around the `attached-O` axis.
-///
-/// # Arguments
-///
-/// * `o_pos` - Position of the oxygen atom.
-/// * `attached_pos` - Position of the atom bonded to oxygen.
-/// * `reference_pos` - Optional reference for determining dihedral orientation.
-/// * `bond_length` - O-H bond length (typically 0.96 Å).
-/// * `bond_angle` - The angle attached-O-H in degrees (typically 109.5°).
-/// * `dihedral_offset` - Rotation around the attached-O axis in degrees.
-///
-/// # Returns
-///
-/// The calculated hydrogen position.
 fn place_hydroxyl_hydrogen(
     o_pos: Point,
     attached_pos: Point,
@@ -937,7 +991,6 @@ fn place_hydroxyl_hydrogen(
     let cos_theta = theta.cos();
 
     let h_local = Vector3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), -cos_theta);
-
     let h_global = x * h_local.x + y * h_local.y + z * h_local.z;
 
     o_pos + h_global * bond_length
@@ -946,15 +999,6 @@ fn place_hydroxyl_hydrogen(
 /// Computes the optimal rigid transform mapping template anchor points to residue atoms.
 ///
 /// Uses Kabsch alignment with safeguards for one- and two-point configurations.
-///
-/// # Arguments
-///
-/// * `r_pts` - Coordinates from the residue.
-/// * `t_pts` - Corresponding coordinates from the template.
-///
-/// # Returns
-///
-/// `Some((rotation, translation))` when alignment succeeds; otherwise `None`.
 fn calculate_transform(r_pts: &[Point], t_pts: &[Point]) -> Option<(Matrix3<f64>, Vector3<f64>)> {
     let n = r_pts.len();
     if n != t_pts.len() || n == 0 {
@@ -1111,6 +1155,53 @@ mod tests {
         residue
     }
 
+    fn his_near_asp(his_id: i32, asp_id: i32, distance: f64) -> Structure {
+        let his = residue_from_template("HID", StandardResidue::HIS, his_id);
+        let mut asp = residue_from_template("ASP", StandardResidue::ASP, asp_id);
+
+        let his_nd1 = his.atom("ND1").expect("ND1").pos;
+        let asp_od1 = asp.atom("OD1").expect("OD1").pos;
+        let offset = his_nd1 + Vector3::new(distance, 0.0, 0.0) - asp_od1;
+        for atom in asp.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        structure_with_residues(vec![his, asp])
+    }
+
+    fn his_near_glu(his_id: i32, glu_id: i32, distance: f64) -> Structure {
+        let his = residue_from_template("HID", StandardResidue::HIS, his_id);
+        let mut glu = residue_from_template("GLU", StandardResidue::GLU, glu_id);
+
+        let his_ne2 = his.atom("NE2").expect("NE2").pos;
+        let glu_oe1 = glu.atom("OE1").expect("OE1").pos;
+        let offset = his_ne2 + Vector3::new(distance, 0.0, 0.0) - glu_oe1;
+        for atom in glu.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        structure_with_residues(vec![his, glu])
+    }
+
+    fn his_near_c_term(his_id: i32, c_term_id: i32, distance: f64) -> Structure {
+        let his = residue_from_template("HID", StandardResidue::HIS, his_id);
+        let mut c_term = c_terminal_residue(c_term_id);
+
+        let his_nd1 = his.atom("ND1").expect("ND1").pos;
+        let c_term_oxt = c_term.atom("OXT").expect("OXT").pos;
+        let offset = his_nd1 + Vector3::new(distance, 0.0, 0.0) - c_term_oxt;
+        for atom in c_term.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        structure_with_residues(vec![his, c_term])
+    }
+
+    fn his_isolated(id: i32) -> Structure {
+        let his = residue_from_template("HID", StandardResidue::HIS, id);
+        structure_with_residue(his)
+    }
+
     fn distance(a: Point, b: Point) -> f64 {
         (a - b).norm()
     }
@@ -1122,219 +1213,753 @@ mod tests {
     }
 
     #[test]
-    fn titratable_templates_exist_in_database() {
-        let expected = [
-            "ASP", "ASH", "GLU", "GLH", "LYS", "LYN", "ARG", "ARN", "CYS", "CYM", "TYR", "TYM",
-            "HID", "HIE", "HIP",
-        ];
-
-        for name in expected {
-            assert!(
-                db::get_template(name).is_some(),
-                "template {name} should exist"
-            );
-        }
-    }
-
-    #[test]
-    fn determine_protonation_state_tracks_pka_thresholds() {
-        let structure =
-            structure_with_residue(residue_from_template("ASP", StandardResidue::ASP, 1));
-        let mut config = HydroConfig {
+    fn asp_protonates_to_ash_below_pka() {
+        let residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
             target_ph: Some(2.5),
             ..HydroConfig::default()
         };
-        assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &config,
-                None,
-                None
-            ),
-            Some("ASH".to_string())
-        );
 
-        config.target_ph = Some(5.0);
-        assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &config,
-                None,
-                None
-            ),
-            Some("ASP".to_string())
-        );
+        add_hydrogens(&mut structure, &config).unwrap();
 
-        let structure =
-            structure_with_residue(residue_from_template("LYS", StandardResidue::LYS, 2));
-        config.target_ph = Some(11.0);
-        assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &config,
-                None,
-                None
-            ),
-            Some("LYN".to_string())
-        );
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "ASH", "ASP should become ASH below pKa 3.9");
+    }
 
-        config.target_ph = Some(7.0);
-        assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &config,
-                None,
-                None
-            ),
-            Some("LYS".to_string())
+    #[test]
+    fn asp_remains_deprotonated_above_pka() {
+        let residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "ASP", "ASP should remain ASP above pKa 3.9");
+    }
+
+    #[test]
+    fn asp_preserves_original_name_without_ph() {
+        let residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "ASP", "ASP should be preserved without pH");
+    }
+
+    #[test]
+    fn glu_protonates_to_glh_below_pka() {
+        let residue = residue_from_template("GLU", StandardResidue::GLU, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(3.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "GLH", "GLU should become GLH below pKa 4.2");
+    }
+
+    #[test]
+    fn glu_remains_deprotonated_above_pka() {
+        let residue = residue_from_template("GLU", StandardResidue::GLU, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "GLU", "GLU should remain GLU above pKa 4.2");
+    }
+
+    #[test]
+    fn glu_preserves_original_name_without_ph() {
+        let residue = residue_from_template("GLU", StandardResidue::GLU, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "GLU", "GLU should be preserved without pH");
+    }
+
+    #[test]
+    fn lys_deprotonates_to_lyn_above_pka() {
+        let residue = residue_from_template("LYS", StandardResidue::LYS, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(11.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "LYN", "LYS should become LYN above pKa 10.5");
+    }
+
+    #[test]
+    fn lys_remains_protonated_below_pka() {
+        let residue = residue_from_template("LYS", StandardResidue::LYS, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "LYS", "LYS should remain LYS below pKa 10.5");
+    }
+
+    #[test]
+    fn lys_preserves_original_name_without_ph() {
+        let residue = residue_from_template("LYS", StandardResidue::LYS, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "LYS", "LYS should be preserved without pH");
+    }
+
+    #[test]
+    fn cys_deprotonates_to_cym_above_pka() {
+        let residue = residue_from_template("CYS", StandardResidue::CYS, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(9.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "CYM", "CYS should become CYM above pKa 8.3");
+    }
+
+    #[test]
+    fn cys_remains_protonated_below_pka() {
+        let residue = residue_from_template("CYS", StandardResidue::CYS, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "CYS", "CYS should remain CYS below pKa 8.3");
+    }
+
+    #[test]
+    fn cys_preserves_original_name_without_ph() {
+        let residue = residue_from_template("CYS", StandardResidue::CYS, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "CYS", "CYS should be preserved without pH");
+    }
+
+    #[test]
+    fn cyx_is_preserved_regardless_of_ph() {
+        let mut residue = residue_from_template("CYS", StandardResidue::CYS, 1);
+        residue.name = "CYX".into();
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(9.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "CYX", "CYX should be preserved regardless of pH");
+    }
+
+    #[test]
+    fn tyr_deprotonates_to_tym_above_pka() {
+        let residue = residue_from_template("TYR", StandardResidue::TYR, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(11.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "TYM", "TYR should become TYM above pKa 10.0");
+    }
+
+    #[test]
+    fn tyr_remains_protonated_below_pka() {
+        let residue = residue_from_template("TYR", StandardResidue::TYR, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "TYR", "TYR should remain TYR below pKa 10.0");
+    }
+
+    #[test]
+    fn tyr_preserves_original_name_without_ph() {
+        let residue = residue_from_template("TYR", StandardResidue::TYR, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "TYR", "TYR should be preserved without pH");
+    }
+
+    #[test]
+    fn arg_deprotonates_to_arn_above_pka() {
+        let residue = residue_from_template("ARG", StandardResidue::ARG, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(13.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "ARN", "ARG should become ARN above pKa 12.5");
+    }
+
+    #[test]
+    fn arg_remains_protonated_below_pka() {
+        let residue = residue_from_template("ARG", StandardResidue::ARG, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "ARG", "ARG should remain ARG below pKa 12.5");
+    }
+
+    #[test]
+    fn arg_preserves_original_name_without_ph() {
+        let residue = residue_from_template("ARG", StandardResidue::ARG, 1);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "ARG", "ARG should be preserved without pH");
+    }
+
+    #[test]
+    fn coo_grid_includes_asp_oxygens_when_deprotonated() {
+        let residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let asp = structure.find_residue("A", 1, None).unwrap();
+        let od1 = asp.atom("OD1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&od1, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "ASP OD1 should be in COO⁻ grid");
+    }
+
+    #[test]
+    fn coo_grid_excludes_ash_oxygens_when_protonated() {
+        let mut residue = residue_from_template("ASP", StandardResidue::ASP, 1);
+        residue.name = "ASH".into();
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let ash = structure.find_residue("A", 1, None).unwrap();
+        let od1 = ash.atom("OD1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&od1, 0.1).exact().collect();
+        assert!(
+            neighbors.is_empty(),
+            "ASH oxygens should NOT be in COO⁻ grid"
         );
     }
 
     #[test]
-    fn determine_protonation_state_respects_his_strategy() {
-        let mut residue = residue_from_template("HID", StandardResidue::HIS, 3);
-        residue.name = "HIS".into();
+    fn coo_grid_includes_glu_oxygens_when_deprotonated() {
+        let residue = residue_from_template("GLU", StandardResidue::GLU, 1);
         let structure = structure_with_residue(residue);
 
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let glu = structure.find_residue("A", 1, None).unwrap();
+        let oe1 = glu.atom("OE1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oe1, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "GLU OE1 should be in COO⁻ grid");
+    }
+
+    #[test]
+    fn coo_grid_excludes_glh_oxygens_when_protonated() {
+        let mut residue = residue_from_template("GLU", StandardResidue::GLU, 1);
+        residue.name = "GLH".into();
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let glh = structure.find_residue("A", 1, None).unwrap();
+        let oe1 = glh.atom("OE1").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oe1, 0.1).exact().collect();
+        assert!(
+            neighbors.is_empty(),
+            "GLH oxygens should NOT be in COO⁻ grid"
+        );
+    }
+
+    #[test]
+    fn coo_grid_includes_c_term_oxygens_at_neutral_ph() {
+        let residue = c_terminal_residue(1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(7.4));
+        let c_term = structure.find_residue("A", 1, None).unwrap();
+        let oxt = c_term.atom("OXT").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oxt, 0.1).exact().collect();
+        assert!(
+            !neighbors.is_empty(),
+            "C-term OXT should be in COO⁻ grid at pH 7.4"
+        );
+    }
+
+    #[test]
+    fn coo_grid_excludes_c_term_oxygens_below_pka() {
+        let residue = c_terminal_residue(1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, Some(2.0));
+        let c_term = structure.find_residue("A", 1, None).unwrap();
+        let oxt = c_term.atom("OXT").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oxt, 0.1).exact().collect();
+        assert!(
+            neighbors.is_empty(),
+            "C-term OXT should NOT be in COO⁻ grid below pKa 3.1"
+        );
+    }
+
+    #[test]
+    fn coo_grid_uses_default_ph_when_target_ph_unset() {
+        let residue = c_terminal_residue(1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_carboxylate_grid(&structure, None);
+        let c_term = structure.find_residue("A", 1, None).unwrap();
+        let oxt = c_term.atom("OXT").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&oxt, 0.1).exact().collect();
+        assert!(
+            !neighbors.is_empty(),
+            "C-term OXT should be in COO⁻ grid with default pH 7.0"
+        );
+    }
+
+    #[test]
+    fn his_becomes_hip_below_pka_threshold() {
+        let mut structure = his_isolated(1);
         let config = HydroConfig {
-            target_ph: Some(7.0),
+            target_ph: Some(5.5),
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "HIP", "HIS should become HIP below pKa 6.0");
+    }
+
+    #[test]
+    fn his_does_not_become_hip_above_pka_threshold() {
+        let mut structure = his_isolated(1);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: false,
             his_strategy: HisStrategy::DirectHIE,
             ..HydroConfig::default()
         };
 
-        assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &config,
-                None,
-                None
-            ),
-            Some("HIE".to_string())
-        );
+        add_hydrogens(&mut structure, &config).unwrap();
 
-        let mut acid_config = HydroConfig::default();
-        acid_config.target_ph = Some(5.5);
+        let res = structure.find_residue("A", 1, None).unwrap();
         assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &acid_config,
-                None,
-                None
-            ),
-            Some("HIP".to_string())
+            res.name, "HIE",
+            "HIS should become HIE (not HIP) above pKa 6.0"
         );
     }
 
     #[test]
-    fn n_terminal_defaults_to_protonated_without_ph() {
-        let residue = n_terminal_residue(40);
-        let mut structure = structure_with_residue(residue);
+    fn his_becomes_hip_when_nd1_near_asp_carboxylate() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &config).unwrap();
 
-        let residue = structure.find_residue("A", 40, None).unwrap();
-        assert!(residue.has_atom("H1"));
-        assert!(residue.has_atom("H2"));
-        assert!(residue.has_atom("H3"));
-    }
-
-    #[test]
-    fn n_terminal_deprotonates_above_pka() {
-        let residue = n_terminal_residue(41);
-        let mut structure = structure_with_residue(residue);
-        let mut config = HydroConfig::default();
-        config.target_ph = Some(9.0);
-
-        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
-
-        let residue = structure.find_residue("A", 41, None).unwrap();
-        assert!(residue.has_atom("H1"));
-        assert!(residue.has_atom("H2"));
-        assert!(!residue.has_atom("H3"));
-    }
-
-    #[test]
-    fn c_terminal_protonates_under_acidic_ph() {
-        let residue = c_terminal_residue(50);
-        let mut structure = structure_with_residue(residue);
-        let mut config = HydroConfig::default();
-        config.target_ph = Some(2.5);
-
-        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
-
-        let residue = structure.find_residue("A", 50, None).unwrap();
-        assert!(residue.has_atom("HOXT"));
-    }
-
-    #[test]
-    fn c_terminal_remains_deprotonated_at_physiological_ph() {
-        let residue = c_terminal_residue(51);
-        let mut structure = structure_with_residue(residue);
-
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
-
-        let residue = structure.find_residue("A", 51, None).unwrap();
-        assert!(!residue.has_atom("HOXT"));
-    }
-
-    #[test]
-    fn determine_protonation_state_skips_already_marked_cyx() {
-        let mut residue = residue_from_template("CYS", StandardResidue::CYS, 25);
-        residue.name = "CYX".into();
-        let structure = structure_with_residue(residue);
-        let mut config = HydroConfig::default();
-        config.target_ph = Some(9.0);
-
+        let his = structure.find_residue("A", 1, None).unwrap();
         assert_eq!(
-            determine_protonation_state(
-                structure
-                    .iter_chains()
-                    .next()
-                    .unwrap()
-                    .iter_residues()
-                    .next()
-                    .unwrap(),
-                &config,
-                None,
-                None
-            ),
-            None
+            his.name, "HIP",
+            "HIS near ASP should become HIP via salt bridge"
+        );
+    }
+
+    #[test]
+    fn his_becomes_hip_when_ne2_near_glu_carboxylate() {
+        let mut structure = his_near_glu(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIP",
+            "HIS near GLU should become HIP via salt bridge"
+        );
+    }
+
+    #[test]
+    fn his_becomes_hip_when_near_c_term_carboxylate() {
+        let mut structure = his_near_c_term(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIP",
+            "HIS near C-term COO⁻ should become HIP via salt bridge"
+        );
+    }
+
+    #[test]
+    fn his_remains_neutral_when_beyond_salt_bridge_threshold() {
+        let mut structure = his_near_asp(1, 2, 10.0);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            his_strategy: HisStrategy::DirectHIE,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIE",
+            "HIS beyond salt bridge distance should remain neutral"
+        );
+    }
+
+    #[test]
+    fn his_salt_bridge_detected_without_ph() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIP",
+            "salt bridge should be detected even without pH"
+        );
+    }
+
+    #[test]
+    fn his_salt_bridge_skipped_when_option_disabled() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::DirectHIE,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIE",
+            "salt bridge should be ignored when disabled"
+        );
+    }
+
+    #[test]
+    fn his_uses_direct_hid_strategy() {
+        let mut structure = his_isolated(1);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::DirectHID,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "HID", "DirectHID strategy should produce HID");
+    }
+
+    #[test]
+    fn his_uses_direct_hie_strategy() {
+        let mut structure = his_isolated(1);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::DirectHIE,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(res.name, "HIE", "DirectHIE strategy should produce HIE");
+    }
+
+    #[test]
+    fn his_uses_random_strategy_produces_valid_tautomer() {
+        let mut structure = his_isolated(1);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::Random,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert!(
+            res.name == "HID" || res.name == "HIE",
+            "random strategy should produce either HID or HIE, got {}",
+            res.name
+        );
+    }
+
+    #[test]
+    fn his_uses_hb_network_strategy_defaults_to_hie_without_neighbors() {
+        let mut structure = his_isolated(1);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::HbNetwork,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert!(
+            res.name == "HID" || res.name == "HIE",
+            "HbNetwork strategy should produce HID or HIE"
+        );
+    }
+
+    #[test]
+    fn his_preserves_hid_name_without_ph_and_no_salt_bridge() {
+        let mut residue = residue_from_template("HID", StandardResidue::HIS, 1);
+        residue.name = "HID".into();
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            res.name, "HID",
+            "HID should be preserved without pH and no salt bridge"
+        );
+    }
+
+    #[test]
+    fn his_preserves_hie_name_without_ph_and_no_salt_bridge() {
+        let mut residue = residue_from_template("HIE", StandardResidue::HIS, 1);
+        residue.name = "HIE".into();
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            res.name, "HIE",
+            "HIE should be preserved without pH and no salt bridge"
+        );
+    }
+
+    #[test]
+    fn his_preserves_hip_name_without_ph_and_no_salt_bridge() {
+        let mut residue = residue_from_template("HIP", StandardResidue::HIS, 1);
+        residue.name = "HIP".into();
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: false,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            res.name, "HIP",
+            "HIP should be preserved without pH and no salt bridge"
+        );
+    }
+
+    #[test]
+    fn his_preserves_name_without_ph_when_no_salt_bridge_found() {
+        let mut residue = residue_from_template("HID", StandardResidue::HIS, 1);
+        residue.name = "HID".into();
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: None,
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            res.name, "HID",
+            "HID should be preserved when salt bridge not found"
+        );
+    }
+
+    #[test]
+    fn his_acidic_ph_overrides_salt_bridge_check() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(5.0),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIP",
+            "acidic pH should result in HIP (priority 1)"
+        );
+    }
+
+    #[test]
+    fn his_salt_bridge_overrides_strategy_selection() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            his_strategy: HisStrategy::DirectHIE,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HIP",
+            "salt bridge should override strategy (priority 3 > 5)"
+        );
+    }
+
+    #[test]
+    fn his_strategy_applies_only_after_salt_bridge_miss() {
+        let mut structure = his_near_asp(1, 2, 10.0);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            his_strategy: HisStrategy::DirectHID,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HID",
+            "strategy should apply when salt bridge not found"
         );
     }
 
@@ -1344,27 +1969,35 @@ mod tests {
         residue.add_atom(Atom::new("FAKE", Element::H, Point::origin()));
         let mut structure = structure_with_residue(residue);
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
 
         let residue = structure.find_residue("A", 10, None).unwrap();
         assert!(residue.has_atom("HZ1"));
         assert!(residue.has_atom("HZ2"));
         assert!(residue.has_atom("HZ3"));
-        assert!(!residue.has_atom("FAKE"));
+        assert!(
+            !residue.has_atom("FAKE"),
+            "existing H should be removed by default"
+        );
     }
 
     #[test]
-    fn add_hydrogens_relabels_asp_under_acidic_ph() {
-        let residue = residue_from_template("ASP", StandardResidue::ASP, 15);
+    fn add_hydrogens_keeps_existing_h_when_configured() {
+        let mut residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        residue.add_atom(Atom::new("HX", Element::H, Point::origin()));
         let mut structure = structure_with_residue(residue);
-        let mut config = HydroConfig::default();
-        config.target_ph = Some(2.0);
+        let config = HydroConfig {
+            remove_existing_h: false,
+            ..HydroConfig::default()
+        };
 
-        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &config).unwrap();
 
-        let residue = structure.find_residue("A", 15, None).unwrap();
-        assert_eq!(residue.name, "ASH");
-        assert!(residue.has_atom("HD2"));
+        let residue = structure.find_residue("A", 1, None).unwrap();
+        assert!(
+            residue.has_atom("HX"),
+            "existing H should be kept when configured"
+        );
     }
 
     #[test]
@@ -1388,7 +2021,7 @@ mod tests {
     }
 
     #[test]
-    fn close_cysteines_are_relabelled_to_cyx_and_skip_hydrogens() {
+    fn close_cysteines_are_relabeled_to_cyx() {
         let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
         let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
 
@@ -1401,88 +2034,124 @@ mod tests {
         }
 
         let mut structure = structure_with_residues(vec![cys1, cys2]);
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation");
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
 
         let res1 = structure.find_residue("A", 30, None).unwrap();
         let res2 = structure.find_residue("A", 31, None).unwrap();
         assert_eq!(res1.name, "CYX");
         assert_eq!(res2.name, "CYX");
-        assert!(!res1.has_atom("HG"));
-        assert!(!res2.has_atom("HG"));
     }
 
     #[test]
-    fn five_prime_phosphate_deprotonated_at_physiological_ph() {
-        let residue = five_prime_residue_with_phosphate(60);
-        let mut structure = structure_with_residue(residue);
+    fn close_cysteines_skip_hg_hydrogen() {
+        let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
+        let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        let sg1 = cys1.atom("SG").expect("SG in cys1").pos;
+        let sg2 = cys2.atom("SG").expect("SG in cys2").pos;
+        let desired = sg1 + Vector3::new(0.5, 0.0, 0.0);
+        let offset = desired - sg2;
+        for atom in cys2.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
 
-        let residue = structure.find_residue("A", 60, None).unwrap();
-        assert!(residue.has_atom("OP3"), "OP3 should remain");
-        assert!(
-            !residue.has_atom("HOP3"),
-            "HOP3 should not exist at neutral pH"
-        );
-        assert!(
-            !residue.has_atom("HOP2"),
-            "HOP2 should not exist at neutral pH"
-        );
+        let mut structure = structure_with_residues(vec![cys1, cys2]);
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let res1 = structure.find_residue("A", 30, None).unwrap();
+        let res2 = structure.find_residue("A", 31, None).unwrap();
+        assert!(!res1.has_atom("HG"), "CYX should not have HG");
+        assert!(!res2.has_atom("HG"), "CYX should not have HG");
     }
 
     #[test]
-    fn five_prime_phosphate_protonated_below_pka() {
-        let residue = five_prime_residue_with_phosphate(61);
-        let mut structure = structure_with_residue(residue);
-        let mut config = HydroConfig::default();
-        config.target_ph = Some(5.5);
+    fn distant_cysteines_remain_unchanged() {
+        let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
+        let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
 
-        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+        let offset = Vector3::new(20.0, 0.0, 0.0);
+        for atom in cys2.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
 
-        let residue = structure.find_residue("A", 61, None).unwrap();
-        assert!(residue.has_atom("OP3"), "OP3 should remain");
-        assert!(residue.has_atom("HOP3"), "HOP3 should be added below pKa");
+        let mut structure = structure_with_residues(vec![cys1, cys2]);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res1 = structure.find_residue("A", 30, None).unwrap();
+        let res2 = structure.find_residue("A", 31, None).unwrap();
+        assert_eq!(res1.name, "CYS", "distant CYS should remain CYS");
+        assert_eq!(res2.name, "CYS", "distant CYS should remain CYS");
     }
 
     #[test]
-    fn five_prime_without_phosphate_gets_ho5() {
-        let residue = five_prime_residue_without_phosphate(62);
+    fn n_terminal_defaults_to_protonated_without_ph() {
+        let residue = n_terminal_residue(40);
         let mut structure = structure_with_residue(residue);
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
 
-        let residue = structure.find_residue("A", 62, None).unwrap();
+        let residue = structure.find_residue("A", 40, None).unwrap();
+        assert!(residue.has_atom("H1"));
+        assert!(residue.has_atom("H2"));
         assert!(
-            residue.has_atom("HO5'"),
-            "HO5' should be added for 5'-OH terminus"
-        );
-        assert!(!residue.has_atom("P"), "phosphorus should not exist");
-    }
-
-    #[test]
-    fn three_prime_nucleic_gets_ho3() {
-        let residue = three_prime_residue(70);
-        let mut structure = structure_with_residue(residue);
-
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
-
-        let residue = structure.find_residue("A", 70, None).unwrap();
-        assert!(
-            residue.has_atom("HO3'"),
-            "HO3' should be added for 3' terminal"
+            residue.has_atom("H3"),
+            "N-term should have 3 H at default pH 7.0"
         );
     }
 
     #[test]
-    fn n_terminal_h_has_tetrahedral_geometry() {
+    fn n_terminal_remains_protonated_below_pka() {
+        let residue = n_terminal_residue(40);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 40, None).unwrap();
+        assert!(residue.has_atom("H1"));
+        assert!(residue.has_atom("H2"));
+        assert!(
+            residue.has_atom("H3"),
+            "N-term should have 3 H below pKa 8.0"
+        );
+    }
+
+    #[test]
+    fn n_terminal_deprotonates_above_pka() {
+        let residue = n_terminal_residue(41);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(9.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 41, None).unwrap();
+        assert!(residue.has_atom("H1"));
+        assert!(residue.has_atom("H2"));
+        assert!(
+            !residue.has_atom("H3"),
+            "N-term should have only 2 H above pKa 8.0"
+        );
+    }
+
+    #[test]
+    fn n_terminal_h_has_tetrahedral_bond_lengths() {
         let residue = n_terminal_residue(98);
         let mut structure = structure_with_residue(residue);
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
 
         let residue = structure.find_residue("A", 98, None).unwrap();
         let n = residue.atom("N").expect("N").pos;
-        let ca = residue.atom("CA").expect("CA").pos;
         let h1 = residue.atom("H1").expect("H1").pos;
         let h2 = residue.atom("H2").expect("H2").pos;
         let h3 = residue.atom("H3").expect("H3").pos;
@@ -1502,10 +2171,29 @@ mod tests {
             (n_h3_dist - NH_BOND_LENGTH).abs() < 0.1,
             "N-H3 distance {n_h3_dist:.3} should be ~{NH_BOND_LENGTH} Å"
         );
+    }
+
+    #[test]
+    fn n_terminal_h_has_tetrahedral_bond_angles() {
+        let residue = n_terminal_residue(98);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 98, None).unwrap();
+        let n = residue.atom("N").expect("N").pos;
+        let ca = residue.atom("CA").expect("CA").pos;
+        let h1 = residue.atom("H1").expect("H1").pos;
+        let h2 = residue.atom("H2").expect("H2").pos;
+        let h3 = residue.atom("H3").expect("H3").pos;
 
         let ca_n_h1_angle = angle_deg(ca, n, h1);
         let ca_n_h2_angle = angle_deg(ca, n, h2);
         let ca_n_h3_angle = angle_deg(ca, n, h3);
+        let h1_n_h2_angle = angle_deg(h1, n, h2);
+        let h2_n_h3_angle = angle_deg(h2, n, h3);
+        let h1_n_h3_angle = angle_deg(h1, n, h3);
+
         assert!(
             (ca_n_h1_angle - SP3_ANGLE).abs() < 5.0,
             "CA-N-H1 angle {ca_n_h1_angle:.1}° should be ~{SP3_ANGLE}°"
@@ -1518,10 +2206,6 @@ mod tests {
             (ca_n_h3_angle - SP3_ANGLE).abs() < 5.0,
             "CA-N-H3 angle {ca_n_h3_angle:.1}° should be ~{SP3_ANGLE}°"
         );
-
-        let h1_n_h2_angle = angle_deg(h1, n, h2);
-        let h2_n_h3_angle = angle_deg(h2, n, h3);
-        let h1_n_h3_angle = angle_deg(h1, n, h3);
         assert!(
             (h1_n_h2_angle - SP3_ANGLE).abs() < 5.0,
             "H1-N-H2 angle {h1_n_h2_angle:.1}° should be ~{SP3_ANGLE}°"
@@ -1537,7 +2221,57 @@ mod tests {
     }
 
     #[test]
-    fn c_terminal_hoxt_has_tetrahedral_geometry() {
+    fn c_terminal_defaults_to_deprotonated_without_ph() {
+        let residue = c_terminal_residue(51);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 51, None).unwrap();
+        assert!(
+            !residue.has_atom("HOXT"),
+            "C-term should be deprotonated at default pH 7.0"
+        );
+    }
+
+    #[test]
+    fn c_terminal_protonates_under_acidic_ph() {
+        let residue = c_terminal_residue(50);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(2.5),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 50, None).unwrap();
+        assert!(
+            residue.has_atom("HOXT"),
+            "C-term should be protonated below pKa 3.1"
+        );
+    }
+
+    #[test]
+    fn c_terminal_remains_deprotonated_at_physiological_ph() {
+        let residue = c_terminal_residue(51);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 51, None).unwrap();
+        assert!(
+            !residue.has_atom("HOXT"),
+            "C-term should be deprotonated at pH 7.4"
+        );
+    }
+
+    #[test]
+    fn c_terminal_hoxt_has_tetrahedral_bond_length() {
         let residue = c_terminal_residue(99);
         let mut structure = structure_with_residue(residue);
         let config = HydroConfig {
@@ -1545,10 +2279,9 @@ mod tests {
             ..HydroConfig::default()
         };
 
-        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &config).unwrap();
 
         let residue = structure.find_residue("A", 99, None).unwrap();
-        let c = residue.atom("C").expect("C").pos;
         let oxt = residue.atom("OXT").expect("OXT").pos;
         let hoxt = residue.atom("HOXT").expect("HOXT").pos;
 
@@ -1557,6 +2290,23 @@ mod tests {
             (oxt_hoxt_dist - COOH_BOND_LENGTH).abs() < 0.1,
             "OXT-HOXT distance {oxt_hoxt_dist:.3} should be ~{COOH_BOND_LENGTH} Å"
         );
+    }
+
+    #[test]
+    fn c_terminal_hoxt_has_tetrahedral_bond_angle() {
+        let residue = c_terminal_residue(99);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(2.0),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 99, None).unwrap();
+        let c = residue.atom("C").expect("C").pos;
+        let oxt = residue.atom("OXT").expect("OXT").pos;
+        let hoxt = residue.atom("HOXT").expect("HOXT").pos;
 
         let c_oxt_hoxt_angle = angle_deg(c, oxt, hoxt);
         assert!(
@@ -1566,11 +2316,64 @@ mod tests {
     }
 
     #[test]
+    fn five_prime_phosphate_deprotonated_at_physiological_ph() {
+        let residue = five_prime_residue_with_phosphate(60);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 60, None).unwrap();
+        assert!(residue.has_atom("OP3"), "OP3 should remain");
+        assert!(
+            !residue.has_atom("HOP3"),
+            "HOP3 should not exist at neutral pH"
+        );
+        assert!(
+            !residue.has_atom("HOP2"),
+            "HOP2 should not exist at neutral pH"
+        );
+    }
+
+    #[test]
+    fn five_prime_phosphate_protonated_below_pka() {
+        let residue = five_prime_residue_with_phosphate(61);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(5.5),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 61, None).unwrap();
+        assert!(residue.has_atom("OP3"), "OP3 should remain");
+        assert!(
+            residue.has_atom("HOP3"),
+            "HOP3 should be added below pKa 6.5"
+        );
+    }
+
+    #[test]
+    fn five_prime_without_phosphate_gets_ho5() {
+        let residue = five_prime_residue_without_phosphate(62);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 62, None).unwrap();
+        assert!(
+            residue.has_atom("HO5'"),
+            "HO5' should be added for 5'-OH terminus"
+        );
+        assert!(!residue.has_atom("P"), "phosphorus should not exist");
+    }
+
+    #[test]
     fn five_prime_ho5_has_tetrahedral_geometry() {
         let residue = five_prime_residue_without_phosphate(80);
         let mut structure = structure_with_residue(residue);
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
 
         let residue = structure.find_residue("A", 80, None).unwrap();
         let c5 = residue.atom("C5'").expect("C5'").pos;
@@ -1591,11 +2394,54 @@ mod tests {
     }
 
     #[test]
+    fn five_prime_phosphate_hop3_has_tetrahedral_geometry() {
+        let residue = five_prime_residue_with_phosphate(82);
+        let mut structure = structure_with_residue(residue);
+        let config = HydroConfig {
+            target_ph: Some(5.5),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let residue = structure.find_residue("A", 82, None).unwrap();
+        let p = residue.atom("P").expect("P").pos;
+        let op3 = residue.atom("OP3").expect("OP3").pos;
+        let hop3 = residue.atom("HOP3").expect("HOP3").pos;
+
+        let op3_hop3_dist = distance(op3, hop3);
+        assert!(
+            (op3_hop3_dist - OH_BOND_LENGTH).abs() < 0.1,
+            "OP3-HOP3 distance {op3_hop3_dist:.3} should be ~{OH_BOND_LENGTH} Å"
+        );
+
+        let p_op3_hop3_angle = angle_deg(p, op3, hop3);
+        assert!(
+            (p_op3_hop3_angle - SP3_ANGLE).abs() < 5.0,
+            "P-OP3-HOP3 angle {p_op3_hop3_angle:.1}° should be ~{SP3_ANGLE}°"
+        );
+    }
+
+    #[test]
+    fn three_prime_nucleic_gets_ho3() {
+        let residue = three_prime_residue(70);
+        let mut structure = structure_with_residue(residue);
+
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let residue = structure.find_residue("A", 70, None).unwrap();
+        assert!(
+            residue.has_atom("HO3'"),
+            "HO3' should be added for 3' terminal"
+        );
+    }
+
+    #[test]
     fn three_prime_ho3_has_tetrahedral_geometry() {
         let residue = three_prime_residue(81);
         let mut structure = structure_with_residue(residue);
 
-        add_hydrogens(&mut structure, &HydroConfig::default()).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
 
         let residue = structure.find_residue("A", 81, None).unwrap();
         let c3 = residue.atom("C3'").expect("C3'").pos;
@@ -1616,31 +2462,200 @@ mod tests {
     }
 
     #[test]
-    fn five_prime_phosphate_hop3_has_tetrahedral_geometry() {
-        let residue = five_prime_residue_with_phosphate(82);
-        let mut structure = structure_with_residue(residue);
+    fn hydro_config_defaults_to_no_ph() {
+        let config = HydroConfig::default();
+        assert!(config.target_ph.is_none(), "default should have no pH");
+    }
+
+    #[test]
+    fn hydro_config_defaults_to_remove_existing_h() {
+        let config = HydroConfig::default();
+        assert!(config.remove_existing_h, "default should remove existing H");
+    }
+
+    #[test]
+    fn hydro_config_defaults_to_hb_network_strategy() {
+        let config = HydroConfig::default();
+        assert_eq!(
+            config.his_strategy,
+            HisStrategy::HbNetwork,
+            "default should use HbNetwork"
+        );
+    }
+
+    #[test]
+    fn hydro_config_defaults_to_salt_bridge_enabled() {
+        let config = HydroConfig::default();
+        assert!(
+            config.his_salt_bridge_protonation,
+            "default should enable salt bridge detection"
+        );
+    }
+
+    #[test]
+    fn effective_terminal_ph_returns_target_when_set() {
+        assert_eq!(effective_terminal_ph(Some(5.5)), 5.5);
+        assert_eq!(effective_terminal_ph(Some(9.0)), 9.0);
+    }
+
+    #[test]
+    fn effective_terminal_ph_returns_default_when_unset() {
+        assert_eq!(effective_terminal_ph(None), DEFAULT_TERMINAL_PH);
+    }
+
+    #[test]
+    fn c_terminus_is_deprotonated_at_and_above_pka() {
+        assert!(c_terminus_is_deprotonated(Some(7.4)));
+        assert!(c_terminus_is_deprotonated(Some(4.0)));
+        assert!(c_terminus_is_deprotonated(Some(C_TERM_PKA)));
+        assert!(c_terminus_is_deprotonated(None));
+    }
+
+    #[test]
+    fn c_terminus_is_protonated_below_pka() {
+        assert!(!c_terminus_is_deprotonated(Some(2.0)));
+        assert!(!c_terminus_is_deprotonated(Some(3.0)));
+        assert!(!c_terminus_is_deprotonated(Some(C_TERM_PKA - 0.1)));
+    }
+
+    #[test]
+    fn n_terminus_is_protonated_at_and_below_pka() {
+        assert!(n_term_is_protonated(Some(7.0)));
+        assert!(n_term_is_protonated(Some(N_TERM_PKA)));
+        assert!(n_term_is_protonated(None));
+    }
+
+    #[test]
+    fn n_terminus_is_deprotonated_above_pka() {
+        assert!(!n_term_is_protonated(Some(9.0)));
+        assert!(!n_term_is_protonated(Some(N_TERM_PKA + 0.1)));
+    }
+
+    #[test]
+    fn c_term_protonation_boundary_is_exclusive() {
+        assert!(c_terminus_is_deprotonated(Some(C_TERM_PKA)));
+        assert!(!c_term_is_protonated(Some(C_TERM_PKA)));
+    }
+
+    #[test]
+    fn acceptor_grid_includes_nitrogen_atoms() {
+        let residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_acceptor_grid(&structure);
+        let ala = structure.find_residue("A", 1, None).unwrap();
+        let n = ala.atom("N").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&n, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "N should be in acceptor grid");
+    }
+
+    #[test]
+    fn acceptor_grid_includes_oxygen_atoms() {
+        let residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_acceptor_grid(&structure);
+        let ala = structure.find_residue("A", 1, None).unwrap();
+        let o = ala.atom("O").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&o, 0.1).exact().collect();
+        assert!(!neighbors.is_empty(), "O should be in acceptor grid");
+    }
+
+    #[test]
+    fn acceptor_grid_excludes_carbon_atoms() {
+        let residue = residue_from_template("ALA", StandardResidue::ALA, 1);
+        let structure = structure_with_residue(residue);
+
+        let grid = build_acceptor_grid(&structure);
+        let ala = structure.find_residue("A", 1, None).unwrap();
+        let ca = ala.atom("CA").unwrap().pos;
+
+        let neighbors: Vec<_> = grid.neighbors(&ca, 0.1).exact().collect();
+        assert!(neighbors.is_empty(), "CA should NOT be in acceptor grid");
+    }
+
+    #[test]
+    fn full_pipeline_preserves_user_protonation_without_ph() {
+        let mut his = residue_from_template("HID", StandardResidue::HIS, 1);
+        his.name = "HID".into();
+        let mut ash = residue_from_template("ASP", StandardResidue::ASP, 2);
+        ash.name = "ASH".into();
+        let mut structure = structure_with_residues(vec![his, ash]);
+
         let config = HydroConfig {
-            target_ph: Some(5.5),
+            target_ph: None,
+            his_salt_bridge_protonation: false,
             ..HydroConfig::default()
         };
 
-        add_hydrogens(&mut structure, &config).expect("hydrogenation succeeds");
+        add_hydrogens(&mut structure, &config).unwrap();
 
-        let residue = structure.find_residue("A", 82, None).unwrap();
-        let p = residue.atom("P").expect("P").pos;
-        let op3 = residue.atom("OP3").expect("OP3").pos;
-        let hop3 = residue.atom("HOP3").expect("HOP3").pos;
+        let his = structure.find_residue("A", 1, None).unwrap();
+        let ash = structure.find_residue("A", 2, None).unwrap();
+        assert_eq!(his.name, "HID", "user-specified HID should be preserved");
+        assert_eq!(ash.name, "ASH", "user-specified ASH should be preserved");
+    }
 
-        let op3_hop3_dist = distance(op3, hop3);
-        assert!(
-            (op3_hop3_dist - OH_BOND_LENGTH).abs() < 0.1,
-            "OP3-HOP3 distance {op3_hop3_dist:.3} should be ~{OH_BOND_LENGTH} Å"
-        );
+    #[test]
+    fn full_pipeline_applies_all_pka_rules_with_ph() {
+        let asp = residue_from_template("ASP", StandardResidue::ASP, 1);
+        let glu = residue_from_template("GLU", StandardResidue::GLU, 2);
+        let lys = residue_from_template("LYS", StandardResidue::LYS, 3);
+        let mut structure = structure_with_residues(vec![asp, glu, lys]);
 
-        let p_op3_hop3_angle = angle_deg(p, op3, hop3);
-        assert!(
-            (p_op3_hop3_angle - SP3_ANGLE).abs() < 5.0,
-            "P-OP3-HOP3 angle {p_op3_hop3_angle:.1}° should be ~{SP3_ANGLE}°"
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let asp = structure.find_residue("A", 1, None).unwrap();
+        let glu = structure.find_residue("A", 2, None).unwrap();
+        let lys = structure.find_residue("A", 3, None).unwrap();
+        assert_eq!(asp.name, "ASP", "ASP should remain at pH 7.4");
+        assert_eq!(glu.name, "GLU", "GLU should remain at pH 7.4");
+        assert_eq!(lys.name, "LYS", "LYS should remain at pH 7.4");
+    }
+
+    #[test]
+    fn full_pipeline_detects_salt_bridge_and_converts_his() {
+        let mut structure = his_near_asp(1, 2, 3.5);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            his_salt_bridge_protonation: true,
+            ..HydroConfig::default()
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        let asp = structure.find_residue("A", 2, None).unwrap();
+        assert_eq!(his.name, "HIP", "HIS should become HIP via salt bridge");
+        assert_eq!(asp.name, "ASP", "ASP should remain deprotonated");
+    }
+
+    #[test]
+    fn full_pipeline_with_all_options_disabled() {
+        let mut his = residue_from_template("HID", StandardResidue::HIS, 1);
+        his.name = "HID".into();
+        let mut structure = structure_with_residue(his);
+
+        let config = HydroConfig {
+            target_ph: None,
+            remove_existing_h: false,
+            his_salt_bridge_protonation: false,
+            his_strategy: HisStrategy::DirectHIE,
+        };
+
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let his = structure.find_residue("A", 1, None).unwrap();
+        assert_eq!(
+            his.name, "HID",
+            "HID should be preserved with all options disabled"
         );
     }
 }

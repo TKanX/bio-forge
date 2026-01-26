@@ -52,6 +52,7 @@ export interface HydroSettings {
   targetPh: number | undefined;
   removeExistingH: boolean;
   hisStrategy: HisStrategy;
+  hisSaltBridgeProtonation: boolean;
 }
 
 /** Default hydrogen settings */
@@ -59,6 +60,7 @@ export const DEFAULT_HYDRO_SETTINGS: HydroSettings = {
   targetPh: undefined,
   removeExistingH: true,
   hisStrategy: "network",
+  hisSaltBridgeProtonation: true,
 };
 
 /** Convert settings to WASM config */
@@ -67,6 +69,7 @@ export function toHydroConfig(settings: HydroSettings): HydroConfig {
     targetPh: settings.targetPh,
     removeExistingH: settings.removeExistingH,
     hisStrategy: settings.hisStrategy,
+    hisSaltBridgeProtonation: settings.hisSaltBridgeProtonation,
   };
 }
 

@@ -13,6 +13,7 @@ import { cn } from "@/lib";
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
+  description?: string;
   error?: string;
 }
 
@@ -21,7 +22,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 // ============================================================================
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, className, id, ...props }, ref) => {
+  ({ label, description, error, className, id, ...props }, ref) => {
     const inputId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
 
     return (
@@ -53,6 +54,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           )}
           {...props}
         />
+        {description && !error && (
+          <p className="text-xs text-muted-foreground/80">{description}</p>
+        )}
         {error && <p className="text-xs text-error">{error}</p>}
       </div>
     );

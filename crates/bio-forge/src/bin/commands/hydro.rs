@@ -18,6 +18,10 @@ pub struct HydroArgs {
     /// Strategy for neutral histidine tautomer assignment.
     #[arg(long = "his", value_enum, default_value = "network")]
     pub his: HistidineStrategy,
+    /// Disable salt bridge detection for HIS → HIP conversion.
+    /// By default, histidines near carboxylate groups (ASP⁻/GLU⁻/C-term COO⁻) become HIP.
+    #[arg(long = "no-his-salt-bridge")]
+    pub no_his_salt_bridge: bool,
 }
 
 /// CLI exposure of [`HisStrategy`].
@@ -51,6 +55,7 @@ pub fn run(structure: &mut Structure, args: &HydroArgs) -> Result<()> {
             target_ph: args.ph,
             remove_existing_h: !args.no_strip,
             his_strategy: args.his.into(),
+            his_salt_bridge_protonation: !args.no_his_salt_bridge,
         };
 
         add_hydrogens(structure, &config).context("Failed to add hydrogens")
