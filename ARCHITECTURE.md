@@ -111,7 +111,7 @@ flowchart TD
 ```
 
 - **Disulfide Detection** – Identifies CYS pairs forming S-S bonds (distance < 2.2Å) and relabels them to `CYX` to prevent thiol hydrogenation.
-- **Acceptor Grid** (Conditional) – Built only when `HisStrategy::HbNetwork` is used AND `target_ph` is specified. Contains all N/O/F atoms for H-bond scoring.
+- **Acceptor Grid** (Conditional) – Built only when `HisStrategy::HbNetwork` is used AND `target_ph` is specified AND `target_ph >= 6.0` (HIS_HIP_PKA). Contains all N/O/F atoms for H-bond scoring.
 - **Phase 1: Non-HIS Protonation** (Conditional) – Skipped entirely when `target_ph` is `None`. Applies pKa-based titration rules to titratable residues (ASP, GLU, LYS, ARG, CYS, TYR) in parallel. Preserves user-specified names when no pH is given.
 - **COO⁻ Grid Construction** (Conditional) – Built only when `his_salt_bridge_protonation` is enabled. Contains carboxylate oxygen atoms from:
   - ASP⁻ (deprotonated aspartate): OD1, OD2
