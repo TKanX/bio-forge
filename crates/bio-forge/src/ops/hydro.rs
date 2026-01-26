@@ -226,13 +226,13 @@ fn build_carboxylate_grid(structure: &Structure, target_ph: Option<f64>) -> Grid
     let c_term_deprotonated = c_terminus_is_deprotonated(target_ph);
 
     let atoms: Vec<(Point, (usize, usize))> = structure
-        .iter_chains()
+        .par_chains()
         .enumerate()
         .flat_map(|(c_idx, chain)| {
             chain
-                .iter_residues()
+                .par_residues()
                 .enumerate()
-                .flat_map(move |(r_idx, residue)| {
+                .flat_map_iter(move |(r_idx, residue)| {
                     let mut positions = Vec::new();
 
                     // ASP⁻ carboxylate oxygens
