@@ -80,6 +80,15 @@ export function StepHydro() {
         }
         options={[...HIS_STRATEGY_OPTIONS]}
       />
+
+      {/* Salt bridge detection */}
+      <Checkbox
+        label="Detect salt bridges (HIS → HIP near COO⁻)"
+        checked={config.hisSaltBridgeProtonation}
+        onChange={(e) =>
+          setConfig({ hisSaltBridgeProtonation: e.target.checked })
+        }
+      />
     </StepWrapper>
   );
 }
