@@ -2021,4 +2021,71 @@ mod tests {
             .expect_err("should fail");
         assert!(matches!(err, Error::IncompleteResidueForHydro { .. }));
     }
+
+    #[test]
+    fn close_cysteines_are_relabeled_to_cyx() {
+        let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
+        let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
+
+        let sg1 = cys1.atom("SG").expect("SG in cys1").pos;
+        let sg2 = cys2.atom("SG").expect("SG in cys2").pos;
+        let desired = sg1 + Vector3::new(0.5, 0.0, 0.0);
+        let offset = desired - sg2;
+        for atom in cys2.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        let mut structure = structure_with_residues(vec![cys1, cys2]);
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let res1 = structure.find_residue("A", 30, None).unwrap();
+        let res2 = structure.find_residue("A", 31, None).unwrap();
+        assert_eq!(res1.name, "CYX");
+        assert_eq!(res2.name, "CYX");
+    }
+
+    #[test]
+    fn close_cysteines_skip_hg_hydrogen() {
+        let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
+        let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
+
+        let sg1 = cys1.atom("SG").expect("SG in cys1").pos;
+        let sg2 = cys2.atom("SG").expect("SG in cys2").pos;
+        let desired = sg1 + Vector3::new(0.5, 0.0, 0.0);
+        let offset = desired - sg2;
+        for atom in cys2.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        let mut structure = structure_with_residues(vec![cys1, cys2]);
+        add_hydrogens(&mut structure, &HydroConfig::default()).unwrap();
+
+        let res1 = structure.find_residue("A", 30, None).unwrap();
+        let res2 = structure.find_residue("A", 31, None).unwrap();
+        assert!(!res1.has_atom("HG"), "CYX should not have HG");
+        assert!(!res2.has_atom("HG"), "CYX should not have HG");
+    }
+
+    #[test]
+    fn distant_cysteines_remain_unchanged() {
+        let cys1 = residue_from_template("CYS", StandardResidue::CYS, 30);
+        let mut cys2 = residue_from_template("CYS", StandardResidue::CYS, 31);
+
+        let offset = Vector3::new(20.0, 0.0, 0.0);
+        for atom in cys2.iter_atoms_mut() {
+            atom.translate_by(&offset);
+        }
+
+        let mut structure = structure_with_residues(vec![cys1, cys2]);
+        let config = HydroConfig {
+            target_ph: Some(7.4),
+            ..HydroConfig::default()
+        };
+        add_hydrogens(&mut structure, &config).unwrap();
+
+        let res1 = structure.find_residue("A", 30, None).unwrap();
+        let res2 = structure.find_residue("A", 31, None).unwrap();
+        assert_eq!(res1.name, "CYS", "distant CYS should remain CYS");
+        assert_eq!(res2.name, "CYS", "distant CYS should remain CYS");
+    }
 }
